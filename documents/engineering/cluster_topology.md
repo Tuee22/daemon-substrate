@@ -2,7 +2,7 @@
 
 **Status**: Authoritative source
 **Supersedes**: N/A
-**Referenced by**: [../README.md](../README.md), [../architecture/daemon_roles.md](../architecture/daemon_roles.md), [pulsar_topics.md](pulsar_topics.md), [minio_buckets.md](minio_buckets.md), [../operations/cluster_bootstrap_runbook.md](../operations/cluster_bootstrap_runbook.md), [../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md), [../operations/linux_cpu_runbook.md](../operations/linux_cpu_runbook.md)
+**Referenced by**: [../README.md](../README.md), [../architecture/daemon_roles.md](../architecture/daemon_roles.md), [pulsar_topics.md](pulsar_topics.md), [minio_buckets.md](minio_buckets.md), [hostbootstrap_integration.md](hostbootstrap_integration.md), [../operations/cluster_bootstrap_runbook.md](../operations/cluster_bootstrap_runbook.md), [../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md), [../operations/linux_cpu_runbook.md](../operations/linux_cpu_runbook.md)
 
 > **Purpose**: Describe what `daemon-substrate-test cluster up` deploys, where each component
 > runs by cohort, and how the chart parameterizes the Apple Silicon vs Linux CPU split.
@@ -55,11 +55,13 @@ it for model-weight hydration.
 
 ## Host-native components (Apple cohort only)
 
-When the operator runs `./bootstrap/apple-silicon.sh up` on Apple Silicon:
+When the operator runs `hostbootstrap cluster up` on Apple Silicon (per the `HostDaemon` model
+in `hostbootstrap.dhall`; see [hostbootstrap_integration.md](hostbootstrap_integration.md)):
 
 - Harbor, Pulsar, MinIO, and the orchestrator Deployment all run in the kind cluster as above.
 - The worker daemon runs as `./.build/daemon-substrate-test service --role worker --config
-  ./.build/daemon-substrate-worker.dhall` directly on the host, outside the cluster.
+  ./.build/daemon-substrate-worker.dhall` directly on the host, outside the cluster, under a
+  system-scope LaunchDaemon installed by `hostbootstrap`.
 - The host worker connects to in-cluster Pulsar and MinIO via the kind cluster's published
   edge port (chosen by `chooseEdgePort` starting at 9090, persisted to
   `./.build/edge-port.json`).
@@ -134,8 +136,21 @@ linearly until an open port is found, records the chosen port under
 chosen port. The host-native Apple worker reads this file at startup to find the in-cluster
 Pulsar / MinIO endpoints.
 
+## Outer container shape
+
+The outer container that hosts `daemon-substrate-test` on the Linux CPU cohort is built from
+the [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap) base image
+(`docker.io/tuee22/hostbootstrap:basecontainer-cpu-*`). The project Dockerfile
+(`docker/linux-substrate.Dockerfile`) is intentionally thin: `FROM ${BASE_IMAGE}` plus the
+project's own build steps. Every heavy toolchain layer (GHC 9.12, Cabal, `kubectl`, `helm`,
+`kind`, `protoc`, `ormolu`, `hlint`, warm Haskell store) lives in the base.
+
+See [hostbootstrap_integration.md](hostbootstrap_integration.md) for the full integration
+shape and the `hostbootstrap.dhall` that declares the per-substrate model.
+
 ## Cross-references
 
 - What runs on Pulsar topics: [pulsar_topics.md](pulsar_topics.md)
 - What runs on MinIO buckets: [minio_buckets.md](minio_buckets.md)
+- hostbootstrap integration: [hostbootstrap_integration.md](hostbootstrap_integration.md)
 - Operator workflow: [../operations/cluster_bootstrap_runbook.md](../operations/cluster_bootstrap_runbook.md)

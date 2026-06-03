@@ -25,3 +25,7 @@ If a workflow step appears to require a commit (for example, a CI check that run
 ## Scope
 
 This repository (`daemon-substrate`) is a shared Haskell library consumed by [`infernix`](https://github.com/Tuee22/infernix) and [`jitML`](https://github.com/Tuee22/jitML). See [README.md](README.md) for the architectural model.
+
+The build, lifecycle, and bootstrap layer is provided by [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap). The canonical bootstrap configuration is `hostbootstrap.dhall` at the repository root; the operator entrypoint on both cohorts is `hostbootstrap cluster up`. See [documents/engineering/hostbootstrap_integration.md](documents/engineering/hostbootstrap_integration.md) for the boundary between what `hostbootstrap` owns and what `daemon-substrate-test` owns.
+
+Assistants must not hand-roll bootstrap shell scripts, custom Compose files, or multi-language Dockerfile layers; substrate behavior is declared in `hostbootstrap.dhall` and the project Dockerfile is a thin `FROM ${BASE_IMAGE}` shell.

@@ -2,7 +2,7 @@
 
 **Status**: Authoritative source
 **Supersedes**: N/A
-**Referenced by**: [../README.md](../README.md), [../engineering/cabal_layout.md](../engineering/cabal_layout.md), [../development/testing_strategy.md](../development/testing_strategy.md), [../operations/cluster_bootstrap_runbook.md](../operations/cluster_bootstrap_runbook.md)
+**Referenced by**: [../README.md](../README.md), [../engineering/cabal_layout.md](../engineering/cabal_layout.md), [../engineering/hostbootstrap_integration.md](../engineering/hostbootstrap_integration.md), [../development/testing_strategy.md](../development/testing_strategy.md), [../operations/cluster_bootstrap_runbook.md](../operations/cluster_bootstrap_runbook.md)
 
 > **Purpose**: Authoritative inventory of the `daemon-substrate-test` executable's command
 > surface, what each command does, and which commands are idempotent reconcilers vs. long-
@@ -15,6 +15,11 @@
 - Three command families: `cluster ...`, `test ...`, `service`.
 - `service` is the only long-running entrypoint. Everything else is an idempotent reconciler.
 - All non-`service` commands are safe to re-run.
+- The outer operator entrypoint on both cohorts is `hostbootstrap cluster up`, not
+  `daemon-substrate-test cluster up` directly. The `daemon-substrate-test cluster ...`
+  subcommands are the *inner* reconcilers, invoked from inside the `Container` (Linux) or as
+  the LaunchDaemon's process (Apple). See
+  [../engineering/hostbootstrap_integration.md](../engineering/hostbootstrap_integration.md).
 
 ## Top-level commands
 
@@ -44,8 +49,8 @@ Safe to re-run after any partial failure; resumes at the first phase that is not
 
 ### `cluster down`
 
-Reconciles cluster absence. Preserves `./.data/`, `./.build/`, the launcher image (Linux), and
-host prerequisites. Removing those is outside lifecycle teardown.
+Reconciles cluster absence. Preserves `./.data/`, `./.build/`, the project container image
+(Linux), and host prerequisites. Removing those is outside lifecycle teardown.
 
 ### `cluster status`
 
@@ -109,9 +114,27 @@ happens at the Dhall layer, not at the CLI layer. The cohort (`apple-silicon` vs
 - `daemon-substrate-test docs check`, `lint files`, etc. as separate top-level commands. They
   are subcommands of `test lint` for now; revisit if the harness grows.
 
+## Outer entry: hostbootstrap
+
+`daemon-substrate-test` is the *inner* CLI; the *outer* entry is
+[`hostbootstrap`](https://github.com/Tuee22/hostbootstrap). The relevant outer commands:
+
+| Command | Purpose |
+|---------|---------|
+| `hostbootstrap doctor` | Detect substrate; idempotently install host prereqs |
+| `hostbootstrap cluster up` | Build artifact (binary on Apple, container on Linux); launch per the model declared in `hostbootstrap.dhall` |
+| `hostbootstrap cluster down` | Tear down (preserves `./.data/`) |
+| `hostbootstrap cluster delete` | Thorough teardown (still preserves `./.data/`) |
+| `hostbootstrap cluster status` | Report status (delegates inward to `daemon-substrate-test cluster status`) |
+| `hostbootstrap run <cmd...>` | Dispatch into the project container (Linux) or run the host binary directly (Apple) |
+
+See [../engineering/hostbootstrap_integration.md](../engineering/hostbootstrap_integration.md)
+for the boundary between outer and inner commands.
+
 ## Cross-references
 
 - Cabal stanzas that produce the binary: [../engineering/cabal_layout.md](../engineering/cabal_layout.md)
 - What each `test` command actually asserts: [../development/testing_strategy.md](../development/testing_strategy.md)
 - What `cluster up` deploys: [../engineering/cluster_topology.md](../engineering/cluster_topology.md)
+- Outer entry contract: [../engineering/hostbootstrap_integration.md](../engineering/hostbootstrap_integration.md)
 - Operator-facing workflow: [../operations/cluster_bootstrap_runbook.md](../operations/cluster_bootstrap_runbook.md)

@@ -111,6 +111,7 @@ referenced by later phases has a canonical home.
 - `documents/engineering/minio_buckets.md`
 - `documents/engineering/cluster_topology.md`
 - `documents/engineering/mock_engine.md`
+- `documents/engineering/hostbootstrap_integration.md`
 - `documents/development/assistant_workflow.md`
 - `documents/development/local_dev.md`
 - `documents/development/testing_strategy.md`
@@ -183,10 +184,67 @@ sections of later phase files. Its implementation lives in
 see that sprint for deliverables, validation, and remaining-work tracking.
 
 This sprint exists only to document the obligation; it does not own the implementation.
-Phase 0 can close (Status: `Done`) once Sprints 0.1 – 0.4 close, even if Sprint 0.5 is
-still `Deferred`. When Sprint 7.4 lands the validator, the `documents/documentation_standards.md`
-Validation section transitions from forward-looking to current-state declarative as a side
-effect, and this sprint's status becomes `Done` via reference to that closure.
+Phase 0 can close (Status: `Done`) once Sprints 0.1 – 0.4 and 0.6 close, even if Sprint 0.5
+is still `Deferred`. When Sprint 7.4 lands the validator, the
+`documents/documentation_standards.md` Validation section transitions from forward-looking to
+current-state declarative as a side effect, and this sprint's status becomes `Done` via
+reference to that closure.
+
+### Sprint 0.6: hostbootstrap re-baseline [Active]
+
+**Status**: Active
+**Implementation**: `documents/engineering/hostbootstrap_integration.md`, root docs,
+`documents/` runbooks and standards, `DEVELOPMENT_PLAN/` overview / standards /
+system-components, phases 1 / 5 / 6 / 7, `legacy-tracking-for-deletion.md`
+**Docs to update**: see Implementation list
+
+#### Objective
+
+Re-baseline `documents/` and `DEVELOPMENT_PLAN/` onto
+[`hostbootstrap`](https://github.com/Tuee22/hostbootstrap) as the canonical infrastructure
+layer. The Haskell-runtime architecture (Pulsar / MinIO / daemon roles / typeclass surface /
+lifecycle / mock engine) is untouched; the re-baseline is about the build / lifecycle /
+bootstrap layer only.
+
+#### Deliverables
+
+- `documents/engineering/hostbootstrap_integration.md` lands as the canonical home for the
+  integration shape, the model-per-substrate mapping, and the ownership boundary
+- root `README.md`, `CLAUDE.md`, `AGENTS.md` reference `hostbootstrap` as the foundation
+- `documents/documentation_standards.md` and
+  `DEVELOPMENT_PLAN/development_plan_standards.md` carry cross-references to `hostbootstrap`'s
+  own standards (without absorbing them)
+- `documents/development/local_dev.md`, both operations runbooks, and
+  `documents/operations/cluster_bootstrap_runbook.md` describe the
+  `hostbootstrap doctor` → `hostbootstrap cluster up` flow
+- `documents/engineering/cabal_layout.md`, `cluster_topology.md`, and
+  `documents/reference/cli_surface.md` reflect the new GHC 9.12 pin and the outer / inner CLI
+  split
+- `DEVELOPMENT_PLAN/system-components.md` lists `hostbootstrap.dhall`, the base image, and
+  the model-per-substrate mapping; previously planned `bootstrap/*.sh` and `compose.yaml`
+  rows are removed
+- Phase 1 GHC pin updated to 9.12; Phase 6 sprints rewritten; Phases 5 and 7 lightly retouched
+- `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md` records the planned-but-now-dropped
+  surfaces (`bootstrap/apple-silicon.sh`, `bootstrap/linux-cpu.sh`, `compose.yaml`,
+  `daemon-substrate-linux-cpu:local` launcher image)
+
+#### Validation
+
+- Cross-reference walk from `README.md` → `CLAUDE.md` →
+  `documents/development/local_dev.md` →
+  `documents/engineering/hostbootstrap_integration.md` → both runbooks reads end-to-end with
+  no dangling references to `bootstrap/*.sh`, `compose.yaml`, the launcher image, or GHC
+  9.14.1.
+- `documents/operations/cluster_bootstrap_runbook.md` carries an explicit ownership boundary
+  paragraph delineating `hostbootstrap` (outer) from `daemon-substrate-test` (inner)
+  responsibilities.
+- Phase status table in `DEVELOPMENT_PLAN/README.md` reflects the re-baseline: Phase 0
+  documentation obligations include the hostbootstrap integration doc; Phase 6 sprints
+  rewritten; Phase 1 GHC pin reads 9.12.
+
+#### Remaining Work
+
+(scoped when the sprint opens)
 
 ## Documentation Requirements
 

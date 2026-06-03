@@ -2,7 +2,7 @@
 
 **Status**: Authoritative source
 **Supersedes**: N/A
-**Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [development_plan_standards.md](development_plan_standards.md)
+**Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [development_plan_standards.md](development_plan_standards.md), [../documents/engineering/hostbootstrap_integration.md](../documents/engineering/hostbootstrap_integration.md)
 
 > **Purpose**: Authoritative inventory of every component the substrate produces or consumes —
 > public module surfaces, typeclasses, protobuf schemas, daemon roles, lifecycle phases, test
@@ -114,10 +114,28 @@ part of the consumer-facing surface.
 
 ## Bootstrap entrypoints
 
-| Script | Cohort | Delegates to |
-|--------|--------|--------------|
-| `bootstrap/apple-silicon.sh` | apple-silicon | `./.build/daemon-substrate-test cluster up` |
-| `bootstrap/linux-cpu.sh` | linux-cpu | `docker compose run --rm daemon-substrate daemon-substrate-test cluster up` |
+The outer bootstrap layer is owned by [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap);
+this repository ships only the project-side config and the thin project Dockerfile. See
+[`../documents/engineering/hostbootstrap_integration.md`](../documents/engineering/hostbootstrap_integration.md)
+for the integration shape.
+
+| Entrypoint | Cohort | Model | Delegates to |
+|------------|--------|-------|--------------|
+| `hostbootstrap cluster up` (via `hostbootstrap.dhall` `H.Substrate.AppleSilicon` entry) | apple-silicon | `HostDaemon` | LaunchDaemon running `./.build/daemon-substrate-test service --role worker` |
+| `hostbootstrap cluster up` (via `hostbootstrap.dhall` `H.Substrate.LinuxCpu` entry) | linux-cpu | `Container` (`service = True`) | project container running `daemon-substrate-test cluster up` |
+
+## Project-side bootstrap files
+
+| File | Purpose |
+|------|---------|
+| `hostbootstrap.dhall` | typed per-substrate config consumed by `hostbootstrap`; declares Container / HostDaemon model and mounts |
+| `docker/linux-substrate.Dockerfile` | thin project Dockerfile (`FROM ${BASE_IMAGE}` plus the project's own build steps); the heavy toolchain is in the base |
+
+## Base image
+
+| Tag | Used by | Provides |
+|-----|---------|----------|
+| `docker.io/tuee22/hostbootstrap:basecontainer-cpu-amd64` / `-arm64` | Linux CPU cohort | GHC 9.12, Cabal, kube tools (`kubectl`, `helm`, `kind`), `protoc`, `ormolu` / `fourmolu`, `hlint`, warm Haskell store |
 
 ## Dhall configs
 

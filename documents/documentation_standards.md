@@ -103,6 +103,11 @@ Rules:
 
 - `DEVELOPMENT_PLAN/` owns phase order, current implementation status, and closure criteria.
 - `documents/` owns architecture and engineering guidance once the relevant document exists.
+- The build, lifecycle, and bootstrap layer is provided by
+  [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap); its own documentation standards
+  (see [`~/hostbootstrap/documents/documentation_standards.md`](https://github.com/Tuee22/hostbootstrap/blob/main/documents/documentation_standards.md))
+  are the source of truth for that repository's docs. This file remains canonical for
+  `daemon-substrate`'s own `documents/` tree.
 - When current-state or closure claims in `documents/` conflict with `DEVELOPMENT_PLAN/`,
   reconcile the governed docs to `DEVELOPMENT_PLAN/`; do not use `documents/` as a parallel
   implementation status authority.

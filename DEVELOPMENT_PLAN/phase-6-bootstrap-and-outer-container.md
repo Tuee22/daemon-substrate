@@ -2,11 +2,13 @@
 
 **Status**: Authoritative source
 **Supersedes**: N/A
-**Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [phase-5-kind-cluster-and-helm-chart.md](phase-5-kind-cluster-and-helm-chart.md), [phase-7-test-harness-integration.md](phase-7-test-harness-integration.md)
+**Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [phase-5-kind-cluster-and-helm-chart.md](phase-5-kind-cluster-and-helm-chart.md), [phase-7-test-harness-integration.md](phase-7-test-harness-integration.md), [../documents/engineering/hostbootstrap_integration.md](../documents/engineering/hostbootstrap_integration.md)
 
-> **Purpose**: Land the supported operator entrypoints: `bootstrap/apple-silicon.sh`,
-> `bootstrap/linux-cpu.sh`, the `docker/linux-substrate.Dockerfile` and `compose.yaml`. After
-> this phase, an operator can run a single bootstrap command and reach a `Ready` cluster.
+> **Purpose**: Land the project-side files that wire `daemon-substrate` onto
+> [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap): the typed `hostbootstrap.dhall`
+> at the repository root, and the thin `docker/linux-substrate.Dockerfile` (`FROM
+> ${BASE_IMAGE}` + project build). After this phase, an operator can run
+> `hostbootstrap cluster up` on either cohort and reach a `Ready` cluster.
 
 ## Phase Status
 
@@ -16,94 +18,119 @@
 
 ## Phase Objective
 
-Make the substrate operable. The cluster bring-up logic exists in Haskell after Phase 5; this
-phase wraps it in the shell + Docker scaffolding that operators actually invoke. After Phase
-6 closes, the workflow described in `documents/operations/apple_silicon_runbook.md` and
+Make the substrate operable on top of `hostbootstrap`. The in-cluster reconciliation logic
+exists in Haskell after Phase 5; this phase ships the outer wiring as a typed Dhall config and
+a thin project Dockerfile. Substrate detection, host-prereq install, container / daemon
+lifecycle, and LaunchDaemon installation are owned by `hostbootstrap` and are not
+re-implemented here. After Phase 6 closes, the workflow described in
+`documents/operations/apple_silicon_runbook.md` and
 `documents/operations/linux_cpu_runbook.md` is real on both cohorts.
+
+The boundary is documented in
+[`../documents/engineering/hostbootstrap_integration.md`](../documents/engineering/hostbootstrap_integration.md).
 
 ## Sprints
 
-### Sprint 6.1: Apple Silicon bootstrap script [Planned]
+### Sprint 6.1: `hostbootstrap.dhall` [Planned]
 
 **Status**: Planned
-**Docs to update**: `documents/operations/apple_silicon_runbook.md`, `system-components.md`
+**Docs to update**: `../documents/engineering/hostbootstrap_integration.md`,
+`../documents/operations/apple_silicon_runbook.md`,
+`../documents/operations/linux_cpu_runbook.md`, `system-components.md`
 
 #### Objective
 
-Land `bootstrap/apple-silicon.sh` as a restartable prerequisite reconciler. Installs Homebrew
-/ ghcup-managed prerequisites where missing, builds `./.build/daemon-substrate-test`,
-stages Dhall under `./.build/`, delegates to the binary for cluster lifecycle.
+Land the typed `hostbootstrap.dhall` at the repository root declaring `Container` for
+`H.Substrate.LinuxCpu` and `HostDaemon` for `H.Substrate.AppleSilicon`. The schema is bundled
+and injected by `hostbootstrap` as `H`; the file has no import line.
 
 #### Deliverables
 
-- `bootstrap/apple-silicon.sh` with `up` and `down` subcommands
-- prerequisite verification (ghcup version, GHC pin, Cabal pin, Colima running)
-- `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always
-  daemon-substrate-test` to build the binary
-- bootstrap-script invocation: only hardcoded absolute-path constants; no inherited env
-  vars; `PATH=/usr/bin:/bin` reset at top
+- `hostbootstrap.dhall` declaring:
+  - `H.Substrate.LinuxCpu` → `H.Model.Container` with `dockerfile = "docker/linux-substrate.Dockerfile"`,
+    `service = True`, and mounts for `./.data` (durable cluster state) and `/var/run/docker.sock`
+    (so the container can drive its own `kind`)
+  - `H.Substrate.AppleSilicon` → `H.Model.HostDaemon` with the `cabal install` build command
+    targeting `exe:daemon-substrate-test`, host prereqs (`H.HostReqs::{ ghc = True }`), and
+    the `daemon` command `.build/daemon-substrate-test service --role worker --config dhall/worker.dhall`
+- shape conforms to the canonical example in
+  `../documents/engineering/hostbootstrap_integration.md`
 
 #### Validation
 
-On a clean macOS arm64 host with Homebrew + ghcup present, `./bootstrap/apple-silicon.sh up`
-produces a `Ready` cluster.
+`hostbootstrap doctor` succeeds on a clean macOS arm64 host (Apple cohort) and on a clean
+Ubuntu 24.04 host with Docker installed (Linux cohort). The Dhall parses cleanly via
+`hostbootstrap`'s bundled `dhall-to-json`.
 
 #### Remaining Work
 
 (scoped when the sprint opens)
 
-### Sprint 6.2: Linux CPU outer container [Planned]
+### Sprint 6.2: Thin project Dockerfile [Planned]
 
 **Status**: Planned
-**Blocked by**: 6.1 (re-uses shared script idioms)
-**Docs to update**: `documents/operations/linux_cpu_runbook.md`, `system-components.md`
+**Blocked by**: 6.1 (the dockerfile is referenced from `hostbootstrap.dhall`)
+**Docs to update**: `../documents/engineering/cluster_topology.md`,
+`../documents/engineering/hostbootstrap_integration.md`, `system-components.md`
 
 #### Objective
 
-Land `docker/linux-substrate.Dockerfile`, `compose.yaml`, and `bootstrap/linux-cpu.sh`. The
-Dockerfile produces `daemon-substrate-linux-cpu:local`; compose.yaml exposes a single
-`daemon-substrate` service with the bind mounts and Docker socket access required for kind.
+Land `docker/linux-substrate.Dockerfile` as the thin project container. The file inherits
+from the `hostbootstrap` base tag (passed via `--build-arg BASE_IMAGE`) and runs only the
+project's own build steps. The heavy toolchain (GHC 9.12, Cabal, kube tools, `protoc`,
+formatters, warm Haskell store) lives in the base.
 
 #### Deliverables
 
-- `docker/linux-substrate.Dockerfile` building from a current Ubuntu / Debian base, including
-  GHC 9.14.1, Cabal, the kind binary, kubectl, helm, and the compiled
-  `daemon-substrate-test` binary baked into the image
-- `compose.yaml` with `daemon-substrate` service, bind mount `./.data:/workspace/.data`,
-  Docker socket mount, no `environment:` block
-- `bootstrap/linux-cpu.sh` verifying Docker prereqs and delegating to `docker compose run
-  --rm daemon-substrate daemon-substrate-test cluster up`
+- `docker/linux-substrate.Dockerfile`:
+  - `ARG BASE_IMAGE`
+  - `FROM ${BASE_IMAGE}`
+  - copies the project source and runs
+    `cabal install --installdir /usr/local/bin --install-method=copy --overwrite-policy=always exe:daemon-substrate-test`
+  - no toolchain installation, no `RUN apt`, no `RUN curl ... ghcup`
 
 #### Validation
 
-On a clean Ubuntu 24.04 host with Docker installed, `./bootstrap/linux-cpu.sh up` produces a
-`Ready` cluster.
+`hostbootstrap build` produces the project image with the compiled `daemon-substrate-test`
+binary on `$PATH` inside the container. The image size is dominated by the base; the project
+layer is small.
 
 #### Remaining Work
 
 (scoped when the sprint opens)
 
-### Sprint 6.3: Bootstrap "down" parity [Planned]
+### Sprint 6.3: End-to-end bring-up [Planned]
 
 **Status**: Planned
 **Blocked by**: 6.1, 6.2
-**Docs to update**: `documents/operations/cluster_bootstrap_runbook.md`
+**Docs to update**: `../documents/operations/cluster_bootstrap_runbook.md`,
+`../documents/operations/apple_silicon_runbook.md`,
+`../documents/operations/linux_cpu_runbook.md`
 
 #### Objective
 
-Make `./bootstrap/<cohort>.sh down` reach parity with `daemon-substrate-test cluster down`
-and confirm that durable repo state survives the cycle on both cohorts.
+Validate that `hostbootstrap cluster up` reaches a `Ready` cluster on both cohorts, and that
+the lifecycle preserves `./.data/` across cycles.
 
 #### Deliverables
 
-- `down` subcommand on both scripts, delegating to `cluster down`
-- documented preservation guarantee for `./.data/`, `./.build/` (Apple), launcher image
-  (Linux)
+- runbook updates documenting verification steps (kubeconfig path, `launchctl list`
+  inspection on Apple, edge-port inspection)
+- documented `./.data/` preservation guarantee (`hostbootstrap` never deletes the mount)
+- on Apple Silicon, documented LaunchDaemon install / remove behavior on `hostbootstrap
+  cluster up` / `cluster down`
 
 #### Validation
 
-Two consecutive `up` / `down` cycles on either cohort produce identical cluster state on the
-second `up` (cluster reattaches to the same PVs, edge port is preserved if available).
+- Apple cohort: `hostbootstrap cluster up` builds the binary, installs
+  `/Library/LaunchDaemons/com.tuee22.daemon-substrate.worker.plist`, brings the kind cluster
+  to `Ready`. `hostbootstrap cluster down` removes the LaunchDaemon and tears the cluster
+  down. Two consecutive `down` / `up` cycles produce identical cluster state on the second
+  `up` (PV reattachment, edge port preserved).
+- Linux CPU cohort: `hostbootstrap cluster up` builds the thin project image, runs the
+  container long-running with the declared mounts, and the container's
+  `daemon-substrate-test cluster up` reaches `Ready`. Two consecutive `down` / `up` cycles
+  produce identical cluster state on the second `up`.
 
 #### Remaining Work
 
@@ -112,18 +139,21 @@ second `up` (cluster reattaches to the same PVs, edge port is preserved if avail
 ## Documentation Requirements
 
 **Engineering docs to create/update:**
-- none unique to this phase (engineering docs landed in earlier phases)
+- `../documents/engineering/hostbootstrap_integration.md` updates from forward-looking to
+  current-state as the `hostbootstrap.dhall` and project Dockerfile land.
+- `../documents/engineering/cluster_topology.md` outer-container shape (Linux) references the
+  built project image.
 
 **Reference docs to create/update:**
-- `documents/reference/cli_surface.md` updates the `daemon-substrate-test` invocation
-  examples from "planned" to current-state declarative.
+- `../documents/reference/cli_surface.md` confirms the outer / inner CLI split is current-state.
 
 **Operations docs to create/update:**
-- `documents/operations/apple_silicon_runbook.md` updates from forward-looking to
+- `../documents/operations/apple_silicon_runbook.md` updates from forward-looking to
   current-state.
-- `documents/operations/linux_cpu_runbook.md` updates from forward-looking to current-state.
-- `documents/operations/cluster_bootstrap_runbook.md` updates the heartbeat / progress
+- `../documents/operations/linux_cpu_runbook.md` updates from forward-looking to current-state.
+- `../documents/operations/cluster_bootstrap_runbook.md` updates the heartbeat / progress
   sections as they become observable in practice.
 
 **Cross-references to add:**
-- `system-components.md` flips bootstrap entrypoint rows to `Implemented: yes`.
+- `system-components.md` flips the `hostbootstrap.dhall`, base-image, and project-Dockerfile
+  rows to `Implemented: yes`.

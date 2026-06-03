@@ -22,7 +22,7 @@
 ```
 daemon-substrate/
 ├── daemon-substrate.cabal
-├── cabal.project          # GHC pin (9.14.1), allow-newer carve-outs
+├── cabal.project          # GHC pin (9.12, matching hostbootstrap base), allow-newer carve-outs
 ├── src/                   # library sources
 │   └── Daemon/
 │       ├── Pulsar.hs
@@ -137,12 +137,18 @@ incremental rebuild times suffer.
 
 ## GHC pin and `cabal.project`
 
-`cabal.project` pins GHC to `9.14.1` to match `infernix` and `jitML`. The
-`allow-newer: *:base, *:template-haskell` carve-out is needed for Dhall's transitive CBOR
-dependencies (same posture as the consumer projects).
+`cabal.project` pins GHC to `9.12` to match the [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap)
+base image (`docker.io/tuee22/hostbootstrap:basecontainer-cpu-*`) and the GHC consumed by
+`infernix` and `jitML`. The `allow-newer: *:base, *:template-haskell` carve-out is needed for
+Dhall's transitive CBOR dependencies (same posture as the consumer projects).
+
+The base image ships a warm Haskell store with the common build dependencies pre-resolved, so
+the project container build only compiles `daemon-substrate`'s own modules. See
+[hostbootstrap_integration.md](hostbootstrap_integration.md) for the integration shape.
 
 ## Cross-references
 
 - Library surface (which modules exist): [../architecture/library_consumption_model.md](../architecture/library_consumption_model.md)
 - CLI of the test executable: [../reference/cli_surface.md](../reference/cli_surface.md)
 - Testing strategy: [../development/testing_strategy.md](../development/testing_strategy.md)
+- hostbootstrap integration: [hostbootstrap_integration.md](hostbootstrap_integration.md)

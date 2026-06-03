@@ -7,6 +7,12 @@
 > **Purpose**: Define how the `daemon-substrate` development plan is organized, updated, and kept
 > aligned with implementation, validation, and the governed `documents/` suite.
 
+The build, lifecycle, and bootstrap layer is provided by
+[`hostbootstrap`](https://github.com/Tuee22/hostbootstrap); its own plan standards
+(see [`~/hostbootstrap/documents/`](https://github.com/Tuee22/hostbootstrap/tree/main/documents))
+govern that repository's planning. This file remains canonical for `daemon-substrate`'s own
+plan.
+
 ## Core Principles
 
 ### A. Continuous Execution-Ordered Narrative
@@ -262,8 +268,11 @@ the library a typed record at startup.
 The repository's own **test harness** is necessarily substrate-aware for cluster-bootstrap
 purposes, and this is the only allowed seam where substrate identifiers appear:
 
-- `bootstrap/apple-silicon.sh` and `bootstrap/linux-cpu.sh` are substrate-specific.
-- `docker/linux-substrate.Dockerfile` and `compose.yaml` are substrate-specific.
+- `hostbootstrap.dhall` at the repository root declares the per-substrate model
+  (`Container` / `HostBinary` / `HostDaemon`); substrate detection, host-prereq install, and
+  container / daemon lifecycle are owned by [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap).
+- `docker/linux-substrate.Dockerfile` is substrate-specific but intentionally thin
+  (`FROM ${BASE_IMAGE}` + project build steps).
 - `src/Daemon/Cluster/*` (kind cluster setup) and the `chart/` directory carry per-substrate
   variation.
 - The `daemon-substrate-test` binary's `cluster` subcommands accept substrate selection via the
@@ -348,11 +357,13 @@ Phase work that touches the test harness is planned around two hardware cohorts.
 
 Definitions:
 
-- **Apple cohort:** Apple Silicon host-native workflow through `./bootstrap/apple-silicon.sh`
-  or direct `./.build/daemon-substrate-test ...` commands.
-- **Linux CPU cohort:** Linux outer-container workflow through `./bootstrap/linux-cpu.sh` or the
-  Compose-launched `docker compose run --rm daemon-substrate daemon-substrate-test ...` command
-  surface.
+- **Apple cohort:** Apple Silicon host-native workflow through `hostbootstrap cluster up`
+  (which builds the binary and installs the LaunchDaemon per the `HostDaemon` model) or direct
+  `./.build/daemon-substrate-test ...` commands.
+- **Linux CPU cohort:** Linux outer-container workflow through `hostbootstrap cluster up`
+  (which builds the thin project container `FROM` the `hostbootstrap` base tag and runs it
+  per the `Container` model) or `hostbootstrap run daemon-substrate-test ...` for ad-hoc
+  invocations inside the container.
 
 There is intentionally no GPU cohort. The mock engine performs no accelerator work, so a CUDA or
 Metal cohort would add cost without exercising any library surface the CPU cohort does not

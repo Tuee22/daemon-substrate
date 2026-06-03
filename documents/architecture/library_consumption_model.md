@@ -28,11 +28,19 @@ packages:
   .
   ../daemon-substrate
 
-with-compiler: ghc-9.14.1
+with-compiler: ghc-9.12
 ```
 
-GHC pin (`9.14.1`) is shared across `daemon-substrate`, `infernix`, and `jitML`. Mismatched
-compiler pins are not supported.
+GHC pin (`9.12`) is shared across `daemon-substrate`, `infernix`, and `jitML`, and matches the
+GHC the [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap) base image ships.
+Mismatched compiler pins are not supported.
+
+Consumers also depend on `hostbootstrap` for their own build, lifecycle, and bootstrap layer.
+The dependency is at the *infrastructure* layer, not the Haskell-library layer:
+`daemon-substrate`'s library surface is unchanged whether or not a consumer uses
+`hostbootstrap`. See
+[`../engineering/hostbootstrap_integration.md`](../engineering/hostbootstrap_integration.md)
+for how `daemon-substrate` itself adopts `hostbootstrap`.
 
 Alternative mechanisms — git submodules, vendoring with copy-paste, a published Hackage / git
 dependency — are not part of the supported contract. If they become necessary, the plan changes
@@ -97,8 +105,9 @@ The library exposes these public modules (names finalized in the relevant phase)
 - branching on **cohort identifier** anywhere under `src/Daemon/*`. (`apple-silicon` and
   `linux-cpu` are *test-harness cohort* identifiers — used by the harness for cluster
   bootstrap, Pulsar topic suffixes, and Dhall file selection. The library proper is cohort-
-  and substrate-agnostic; only the harness under `src/Daemon/Cluster/*`, `bootstrap/`,
-  `docker/`, and `chart/` may branch on cohort, and only for cluster bring-up purposes.)
+  and substrate-agnostic; only the harness under `src/Daemon/Cluster/*`, `hostbootstrap.dhall`,
+  `docker/linux-substrate.Dockerfile`, and `chart/` may branch on cohort, and only for
+  cluster bring-up purposes.)
 - environment-variable reads (`lookupEnv`, `getEnv`, `getEnvironment`, `setEnv`)
 - `proc "<bare-command-name>"` invocations (anything resolved via `$PATH`)
 - direct WAN access (the substrate never talks to HuggingFace, S3, or any external endpoint;
@@ -112,9 +121,12 @@ constraint the consumer enforces.
 
 The library code is substrate-agnostic; the *test harness* that proves the library works is
 necessarily substrate-aware for cluster bootstrap (Apple host build vs Linux outer container).
-The harness lives outside `src/Daemon/*` — under `bootstrap/`, `docker/`, `chart/`,
-`src/Daemon/Cluster/*`, and the `daemon-substrate-test` executable. Consumers do not run the
-harness; it exists for `daemon-substrate`'s own validation. See
+The harness lives outside `src/Daemon/*` — under `hostbootstrap.dhall`,
+`docker/linux-substrate.Dockerfile`, `chart/`, `src/Daemon/Cluster/*`, and the
+`daemon-substrate-test` executable. The substrate-specific bring-up itself is delegated to
+[`hostbootstrap`](https://github.com/Tuee22/hostbootstrap); see
+[`../engineering/hostbootstrap_integration.md`](../engineering/hostbootstrap_integration.md).
+Consumers do not run the harness; it exists for `daemon-substrate`'s own validation. See
 [../development/testing_strategy.md](../development/testing_strategy.md).
 
 ## Cross-references

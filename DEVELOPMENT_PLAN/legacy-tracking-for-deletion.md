@@ -9,7 +9,25 @@
 
 ## Pending
 
-(none)
+The following surfaces were planned in earlier revisions of this repository's development plan
+and have been removed by the `hostbootstrap` re-baseline (Phase 0 Sprint 0.6). They were never
+implemented; the entries below record the decision so the plan history remains coherent.
+Removal owning phase is Phase 0 Sprint 0.6 (documentation); replacements ship in Phase 6.
+
+- **`bootstrap/apple-silicon.sh`** — planned but never implemented; replaced by the
+  `HostDaemon` model entry in `hostbootstrap.dhall`. Owning phase: phase-0, sprint 0.6.
+  Replacement: `hostbootstrap cluster up` driving the LaunchDaemon (see
+  `../documents/engineering/hostbootstrap_integration.md`).
+- **`bootstrap/linux-cpu.sh`** — planned but never implemented; replaced by the `Container`
+  model entry in `hostbootstrap.dhall`. Owning phase: phase-0, sprint 0.6. Replacement:
+  `hostbootstrap cluster up` driving the project container.
+- **`compose.yaml`** — planned but never implemented; replaced by the `Container` model
+  declared in `hostbootstrap.dhall` (`service = True`, `.data` + Docker-socket mounts).
+  Owning phase: phase-0, sprint 0.6.
+- **`daemon-substrate-linux-cpu:local` launcher image** — planned but never implemented;
+  replaced by the thin `docker/linux-substrate.Dockerfile` that inherits from the
+  `hostbootstrap` base tag. Owning phase: phase-0, sprint 0.6. Replacement landing in
+  phase-6, sprint 6.2.
 
 ## Completed
 

@@ -47,6 +47,9 @@ Before making any non-trivial change, read:
   phase.
 - [../../DEVELOPMENT_PLAN/system-components.md](../../DEVELOPMENT_PLAN/system-components.md) —
   authoritative inventory of components, typeclasses, schemas, topics, buckets, roles.
+- [../engineering/hostbootstrap_integration.md](../engineering/hostbootstrap_integration.md) —
+  the canonical infrastructure layer this repository sits on top of, and the
+  `hostbootstrap` / `daemon-substrate` ownership boundary.
 
 ## House style
 
@@ -68,6 +71,19 @@ which docs must update together. See:
 
 - [../documentation_standards.md § Update Rules](../documentation_standards.md)
 - [../../DEVELOPMENT_PLAN/development_plan_standards.md § H](../../DEVELOPMENT_PLAN/development_plan_standards.md)
+
+## When you touch bootstrap / lifecycle
+
+- Substrate behavior is declared in `hostbootstrap.dhall` at the repository root. Do not
+  hand-roll `bootstrap/*.sh`, `compose.yaml`, or multi-language Dockerfile layers — those
+  responsibilities belong to [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap).
+- The project Dockerfile is intentionally thin: `FROM ${BASE_IMAGE}` plus the project's own
+  build steps. Toolchain installation (GHC, Cabal, kube tools, `protoc`) belongs in the
+  `hostbootstrap` base image, not here.
+- The in-cluster reconcilers (kind create, Helm install, ConfigMap render, Deployment apply)
+  remain in Haskell under `src/Daemon/Cluster/*`. The seam between `hostbootstrap` and
+  `daemon-substrate-test` is documented in
+  [../engineering/hostbootstrap_integration.md](../engineering/hostbootstrap_integration.md).
 
 ## When you write Haskell
 

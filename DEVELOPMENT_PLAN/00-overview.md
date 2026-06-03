@@ -7,10 +7,23 @@
 > **Purpose**: Tell the cross-phase narrative — what each phase produces, why this order, and
 > the dependency edges between them.
 
+## Foundation
+
+The build, lifecycle, and bootstrap layer is provided by
+[`hostbootstrap`](https://github.com/Tuee22/hostbootstrap) — a host-installed Python CLI plus
+four prebuilt base container images. `daemon-substrate` declares its substrate behavior in a
+typed `hostbootstrap.dhall` at the repository root and inherits GHC 9.12 + Cabal + kube tools
++ `protoc` + `ormolu` + `hlint` + a warm Haskell store from the base image. The phases below
+focus on the Haskell library, the in-cluster reconcilers, and the `hostbootstrap.dhall` plus
+thin project Dockerfile that wire the two layers together. What `daemon-substrate` explicitly
+does **not** implement: substrate detection, host-prereq install, container lifecycle,
+LaunchDaemon / systemd unit creation, multi-language toolchain installation. See
+[`../documents/engineering/hostbootstrap_integration.md`](../documents/engineering/hostbootstrap_integration.md).
+
 ## The buildout
 
 The plan reads as one ordered buildout from an empty repository to a self-validating shared
-Haskell substrate consumed by `infernix` and `jitML`.
+Haskell substrate consumed by `infernix` and `jitML`, sitting on top of `hostbootstrap`.
 
 ### Phase 0 — documentation and governance
 
@@ -25,9 +38,10 @@ on it.
 
 ### Phase 1 — library scaffolding and cabal package
 
-Establish `daemon-substrate.cabal`, `cabal.project` (GHC 9.14.1 pinned), the empty `src/Daemon/`
-module skeleton, and a no-op CI build that proves `cabal build all` succeeds. No public
-typeclass surface yet; just the structural shell.
+Establish `daemon-substrate.cabal`, `cabal.project` (GHC 9.12 pinned, matching the
+`hostbootstrap` base image), the empty `src/Daemon/` module skeleton, and a no-op CI build
+that proves `cabal build all` succeeds. No public typeclass surface yet; just the structural
+shell.
 
 Depends on Phase 0 closing the documentation standards so the cabal layout doc can land
 alongside the actual cabal file.
@@ -72,12 +86,16 @@ Depends on Phase 4 because the chart needs working daemon binaries to deploy.
 
 ### Phase 6 — bootstrap and outer container
 
-Land `bootstrap/apple-silicon.sh` and `bootstrap/linux-cpu.sh`, the
-`docker/linux-substrate.Dockerfile` and `compose.yaml`, and the `daemon-substrate-linux-cpu:local`
-launcher image build. After this phase, an operator can run `./bootstrap/apple-silicon.sh up`
-or `./bootstrap/linux-cpu.sh up` and reach a `Ready` cluster.
+Land `hostbootstrap.dhall` at the repository root (declaring `Container` for Linux CPU and
+`HostDaemon` for Apple Silicon) and the thin `docker/linux-substrate.Dockerfile`
+(`FROM ${BASE_IMAGE}` plus the project's own build steps). After this phase, an operator can
+run `hostbootstrap cluster up` on either cohort and reach a `Ready` cluster. Substrate
+detection, host-prereq install, container / daemon lifecycle, and LaunchDaemon installation
+are all handled by `hostbootstrap`; this phase only ships the project-side config and
+Dockerfile.
 
-Depends on Phase 5 because the bootstrap delegates to the cluster bring-up flow.
+Depends on Phase 5 because the inner reconcilers (kind / Harbor / Pulsar / MinIO /
+orchestrator / worker) must exist before the outer entry can deliver a `Ready` cluster.
 
 ### Phase 7 — test harness integration
 
@@ -106,3 +124,6 @@ the same phase state. See [development_plan_standards.md § Q](development_plan_
   consumers' work, not the substrate's.
 - A GPU cohort. The mock engine performs no accelerator work; a GPU cohort would add cost
   without coverage.
+- A "bootstrap scripting" phase. Substrate-specific bootstrap shell scripts, custom Compose
+  files, and multi-language Dockerfile layers are owned by
+  [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap), not by this repository.

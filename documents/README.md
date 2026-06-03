@@ -33,6 +33,7 @@ documents/
 | Test-harness MinIO buckets | [engineering/minio_buckets.md](engineering/minio_buckets.md) |
 | Cluster topology | [engineering/cluster_topology.md](engineering/cluster_topology.md) |
 | Mock engine | [engineering/mock_engine.md](engineering/mock_engine.md) |
+| hostbootstrap integration | [engineering/hostbootstrap_integration.md](engineering/hostbootstrap_integration.md) |
 | Assistant workflow | [development/assistant_workflow.md](development/assistant_workflow.md) |
 | Local development | [development/local_dev.md](development/local_dev.md) |
 | Testing strategy | [development/testing_strategy.md](development/testing_strategy.md) |

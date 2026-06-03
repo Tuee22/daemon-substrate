@@ -16,7 +16,7 @@
 ## Phase Objective
 
 Stand up the structural shell of the library: `daemon-substrate.cabal`, `cabal.project` with
-GHC 9.14.1 pinned, an empty `src/Daemon/` skeleton, and a no-op `cabal build all` that
+GHC 9.12 pinned, an empty `src/Daemon/` skeleton, and a no-op `cabal build all` that
 verifies the toolchain is healthy.
 
 No public typeclass surface lands in this phase. Phase 1 produces a buildable but empty
@@ -38,8 +38,9 @@ toolchain.
 
 - `daemon-substrate.cabal` with one `library` stanza and the three `test-suite` stanzas
   (initially empty `Main.hs` placeholders)
-- `cabal.project` with `with-compiler: ghc-9.14.1` and the `allow-newer: *:base,
-  *:template-haskell` carve-out
+- `cabal.project` with `with-compiler: ghc-9.12` (matching the
+  [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap) base image) and the
+  `allow-newer: *:base, *:template-haskell` carve-out
 - `cabal build all` succeeds with the placeholder modules
 
 #### Validation
@@ -90,7 +91,7 @@ push to `main` and on pull requests.
 
 #### Deliverables
 
-- `.github/workflows/ci.yml` building on `ubuntu-latest` with GHC 9.14.1
+- `.github/workflows/ci.yml` building on `ubuntu-latest` with GHC 9.12
 - Optionally, a separate matrix entry building on `macos-latest` (Apple cohort)
 
 #### Validation

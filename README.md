@@ -2,7 +2,7 @@
 
 **Status**: Governed orientation document
 **Supersedes**: N/A
-**Canonical homes**: [documents/README.md](documents/README.md), [DEVELOPMENT_PLAN/README.md](DEVELOPMENT_PLAN/README.md)
+**Canonical homes**: [documents/README.md](documents/README.md), [DEVELOPMENT_PLAN/README.md](DEVELOPMENT_PLAN/README.md), [documents/engineering/hostbootstrap_integration.md](documents/engineering/hostbootstrap_integration.md)
 
 > **Purpose**: Orient new readers and consumers (`infernix`, `jitML`) to the shape, scope, and
 > intent of the shared substrate library, and point at the canonical homes for documentation and
@@ -84,7 +84,7 @@ packages:
   .
   ../daemon-substrate
 
-with-compiler: ghc-9.14.1
+with-compiler: ghc-9.12
 ```
 
 The library exposes a small surface that consumers wire into their own daemon entry points:
@@ -107,10 +107,25 @@ Upstream callers of the workflow (the test driver, in the harness; real users, i
 
 The harness runs on two cohorts:
 
-- **Apple Silicon** — host-native via `./bootstrap/apple-silicon.sh up` → `./.build/daemon-substrate-test ...`
-- **Linux CPU** — outer container via `./bootstrap/linux-cpu.sh up` → `docker compose run --rm daemon-substrate daemon-substrate-test ...`
+- **Apple Silicon** — `hostbootstrap cluster up` builds `./.build/daemon-substrate-test` natively and installs a system-scope LaunchDaemon that runs `daemon-substrate-test service --role worker`.
+- **Linux CPU** — `hostbootstrap cluster up` builds a thin project container `FROM` the `hostbootstrap` base tag and runs `daemon-substrate-test cluster up` inside it.
 
 Consumers do **not** run the harness — it exists for `daemon-substrate`'s own validation only. The cluster bootstrap flow, the operator-facing commands, and the cohort obligations are documented in [`documents/development/testing_strategy.md`](documents/development/testing_strategy.md) and [`documents/operations/cluster_bootstrap_runbook.md`](documents/operations/cluster_bootstrap_runbook.md).
+
+## Foundation
+
+`daemon-substrate`'s build, lifecycle, and bootstrap layer is provided by
+[`hostbootstrap`](https://github.com/Tuee22/hostbootstrap) — a host-installed Python CLI plus
+four prebuilt base container images that standardize substrate detection, host-prereq install,
+multi-language toolchain (GHC 9.12, Cabal, kube tools, `protoc`, fourmolu, hlint, warm Haskell
+store), and container / daemon lifecycle. `daemon-substrate` declares its own substrate
+behavior in a typed `hostbootstrap.dhall` at the repository root; the operator entrypoint on
+both cohorts is `hostbootstrap cluster up`. The boundary between what `hostbootstrap` owns
+and what `daemon-substrate-test` owns is described in
+[`documents/engineering/hostbootstrap_integration.md`](documents/engineering/hostbootstrap_integration.md).
+
+`infernix` and `jitML` are also `hostbootstrap` consumers, so the three-project family shares
+one infrastructure substrate.
 
 ## Status
 

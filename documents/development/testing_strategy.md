@@ -84,6 +84,11 @@ both cohorts (Apple Silicon, Linux CPU) must close before a phase that touches t
 move to `Done`. Sprint validation language distinguishes local-cohort closure from
 counterpart-cohort pending status.
 
+On both cohorts the operator entrypoint is `hostbootstrap cluster up`; the `daemon-substrate-test
+test ...` commands run inside the resulting environment (`./.build/daemon-substrate-test ...`
+on Apple Silicon; `hostbootstrap run daemon-substrate-test ...` on Linux CPU). See
+[../engineering/hostbootstrap_integration.md](../engineering/hostbootstrap_integration.md).
+
 There is no GPU cohort. The mock engine performs no accelerator work; adding a GPU cohort
 would cost without coverage.
 

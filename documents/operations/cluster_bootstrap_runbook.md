@@ -2,35 +2,51 @@
 
 **Status**: Authoritative source
 **Supersedes**: N/A
-**Referenced by**: [../README.md](../README.md), [../../README.md](../../README.md), [apple_silicon_runbook.md](apple_silicon_runbook.md), [linux_cpu_runbook.md](linux_cpu_runbook.md), [../engineering/cluster_topology.md](../engineering/cluster_topology.md), [../development/testing_strategy.md](../development/testing_strategy.md)
+**Referenced by**: [../README.md](../README.md), [../../README.md](../../README.md), [apple_silicon_runbook.md](apple_silicon_runbook.md), [linux_cpu_runbook.md](linux_cpu_runbook.md), [../engineering/cluster_topology.md](../engineering/cluster_topology.md), [../engineering/hostbootstrap_integration.md](../engineering/hostbootstrap_integration.md), [../development/testing_strategy.md](../development/testing_strategy.md)
 
-> **Purpose**: Operator-facing reference for the `daemon-substrate-test cluster ...`
-> subcommands — bring-up, status, teardown — and the lifecycle phases the operator should
-> expect to see during each.
+> **Purpose**: Operator-facing reference for cluster lifecycle — the outer
+> `hostbootstrap cluster ...` entry, the inner `daemon-substrate-test cluster ...`
+> reconcilers, and the lifecycle phases the operator should expect to see during each.
 
 ## TL;DR
 
-- `daemon-substrate-test cluster up` is a reconciler. Idempotent. Safe to re-run.
-- `daemon-substrate-test cluster status` is read-only; it never mutates cluster or repo state.
-- `daemon-substrate-test cluster down` preserves `./.data/` and `./.build/` so the next `up`
-  is fast.
+- `hostbootstrap cluster up` is the outer entry on both cohorts. It builds the project
+  artifact (binary on Apple, container on Linux) and launches the appropriate model.
+- `daemon-substrate-test cluster up` is the inner reconciler that reconciles the kind cluster
+  + Harbor / Pulsar / MinIO / orchestrator topology. It runs inside the project container on
+  Linux and on the host on Apple.
+- Both commands are idempotent. Safe to re-run.
+- `cluster down` (outer or inner) preserves `./.data/` and `./.build/` so the next `up` is
+  fast.
 - Long-running phases (Docker image build, Harbor publication) refresh a heartbeat roughly
   every 30 seconds. Wall-clock duration alone is not failure; heartbeat staleness is.
 
+## Ownership boundary
+
+- **Outer (hostbootstrap)**: substrate detection, host prereqs, base image / project image
+  build, container or LaunchDaemon lifecycle, `.data` preservation.
+- **Inner (daemon-substrate-test)**: kind create, Helm install of Harbor / Pulsar / MinIO,
+  ConfigMap render, Deployment apply, MinIO bucket seeding, edge-port discovery, lifecycle
+  phase transitions.
+
+See [../engineering/hostbootstrap_integration.md](../engineering/hostbootstrap_integration.md)
+for the full boundary statement.
+
 ## Bring-up
 
-Apple Silicon (host-native):
+Apple Silicon (host-native worker via LaunchDaemon; in-cluster reconcilers on host):
 
 ```bash
-./bootstrap/apple-silicon.sh up      # first time: installs prereqs, builds binary, brings cluster up
-./.build/daemon-substrate-test cluster up    # subsequent: reconciles cluster only
+hostbootstrap cluster up                           # outer: build binary, install LaunchDaemon
+./.build/daemon-substrate-test cluster up          # inner: reconcile kind cluster (auto-invoked)
 ```
 
-Linux CPU (outer container):
+Linux CPU (outer container; in-cluster reconcilers inside the container):
 
 ```bash
-./bootstrap/linux-cpu.sh up
-docker compose run --rm daemon-substrate daemon-substrate-test cluster up
+hostbootstrap cluster up                           # outer: build container, run service
+# inner runs automatically inside the container
+hostbootstrap run daemon-substrate-test cluster up # invoke inner directly if needed
 ```
 
 `cluster up` reconciles, in order:
@@ -58,7 +74,7 @@ timestamp, and any per-phase detail.
 
 ```bash
 ./.build/daemon-substrate-test cluster status        # Apple
-docker compose run --rm daemon-substrate daemon-substrate-test cluster status   # Linux
+hostbootstrap run daemon-substrate-test cluster status   # Linux
 ```
 
 Reports:
@@ -94,19 +110,22 @@ Typical bring-up durations:
 ## Teardown
 
 ```bash
-./.build/daemon-substrate-test cluster down          # Apple
-docker compose run --rm daemon-substrate daemon-substrate-test cluster down   # Linux
+hostbootstrap cluster down                           # both cohorts (outer)
+./.build/daemon-substrate-test cluster down          # Apple, inner only
+hostbootstrap run daemon-substrate-test cluster down # Linux, inner only
 ```
 
 Tears down the Kind cluster and all in-cluster resources. Preserves:
 
-- `./.data/` — durable cluster state (PV-backing files)
+- `./.data/` — durable cluster state (PV-backing files); `hostbootstrap` never deletes this
 - `./.build/` — compiled binary (Apple), staged Dhall, kubeconfig, edge-port record
-- the launcher Docker image (Linux only)
+- the project container image (Linux only; rebuilt only by `hostbootstrap cluster up
+  --build-base` or `cluster delete` then `up`)
 - installed host prerequisites
 
 A subsequent `cluster up` reuses the preserved state and is significantly faster than the
-first bring-up.
+first bring-up. `hostbootstrap cluster delete` performs a thorough teardown (cluster +
+derived state) but still preserves `./.data/`.
 
 ## Edge port
 
@@ -134,7 +153,7 @@ Neither path mutates the operator's `~/.kube/config`. To use `kubectl` directly:
 
 ```bash
 KUBECONFIG=./.build/daemon-substrate.kubeconfig kubectl get pods -A   # Apple
-# Linux: invoke through the launcher container
+hostbootstrap run kubectl --kubeconfig /workspace/.data/runtime/daemon-substrate.kubeconfig get pods -A   # Linux
 ```
 
 ## Cross-references

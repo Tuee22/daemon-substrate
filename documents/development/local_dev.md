@@ -2,83 +2,99 @@
 
 **Status**: Authoritative source
 **Supersedes**: N/A
-**Referenced by**: [../README.md](../README.md), [assistant_workflow.md](assistant_workflow.md), [testing_strategy.md](testing_strategy.md), [../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md), [../operations/linux_cpu_runbook.md](../operations/linux_cpu_runbook.md)
+**Referenced by**: [../README.md](../README.md), [assistant_workflow.md](assistant_workflow.md), [testing_strategy.md](testing_strategy.md), [../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md), [../operations/linux_cpu_runbook.md](../operations/linux_cpu_runbook.md), [../engineering/hostbootstrap_integration.md](../engineering/hostbootstrap_integration.md)
 
 > **Purpose**: Get a contributor from a fresh clone to a working build and a green test suite
 > on either of the two supported cohorts (Apple Silicon, Linux CPU).
 
 ## TL;DR
 
+- Install `hostbootstrap` into host Python (one-time).
 - Clone the repo.
-- Run the supported bootstrap script for your host.
-- The first run installs prerequisites, builds the test binary or launcher image, and brings
-  up the kind cluster. Subsequent runs reconcile.
+- Run `hostbootstrap doctor` and `hostbootstrap cluster up`.
 - Use `daemon-substrate-test test ...` for unit and integration coverage.
+
+## One-time install
+
+[`hostbootstrap`](https://github.com/Tuee22/hostbootstrap) is the canonical infrastructure
+layer for this repository — substrate detection, host prereqs, base image, container / daemon
+lifecycle. Install it into host Python (not a project virtualenv):
+
+```bash
+python -m pip install "git+https://github.com/Tuee22/hostbootstrap.git#egg=hostbootstrap"
+```
+
+Stock Python 3.12 on macOS arm64 or Ubuntu 24.04 is sufficient. `hostbootstrap` provisions its
+own native `dhall-to-json` binary on first use.
 
 ## Supported cohorts
 
-| Cohort | Host | Bootstrap script | Test binary location |
-|--------|------|------------------|----------------------|
-| Apple Silicon | macOS arm64 | `./bootstrap/apple-silicon.sh up` | `./.build/daemon-substrate-test` |
-| Linux CPU | x86_64 / arm64 Linux | `./bootstrap/linux-cpu.sh up` | inside the `daemon-substrate-linux-cpu:local` container |
+| Cohort | Host | hostbootstrap model | Test binary location |
+|--------|------|---------------------|----------------------|
+| Apple Silicon | macOS arm64 | `HostDaemon` (system-scope LaunchDaemon) | `./.build/daemon-substrate-test` (built natively via `ghcup`) |
+| Linux CPU | x86_64 / arm64 Linux | `Container` (`service = True`) | inside the thin project container (`FROM ${BASE_IMAGE}`) |
 
 There is no host-native Linux workflow. Linux contributors always go through the outer
 container.
 
 ## First-run prerequisites
 
+`hostbootstrap doctor` detects the substrate and idempotently installs the host prereqs.
+
 ### Apple Silicon
 
-The bootstrap script verifies and (where possible) installs:
+`hostbootstrap doctor` verifies / installs:
 
 - Homebrew
-- `ghcup` and GHC 9.14.1
-- `cabal` 3.16.1.0
-- `protoc` (for protobuf code generation)
-- Docker via Colima (for the in-cluster Harbor / Pulsar / MinIO images)
+- `ghcup` and GHC 9.12
+- Cabal (paired with the GHC pin)
+- Colima (the only supported Docker environment on Apple Silicon)
 
 See [../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md) for the
-full prerequisite list and the manual steps the script cannot do for you (Apple ID, Homebrew
-install, etc.).
+full prerequisite list and the manual steps the tool cannot do (Apple ID, Homebrew install).
 
 ### Linux CPU
 
-The bootstrap script verifies and (where possible) installs:
+`hostbootstrap doctor` verifies / installs:
 
 - Docker Engine with the Compose plugin
-- `docker buildx` for image building
+- `docker buildx`
 - User-namespace access to `/var/run/docker.sock`
 
-See [../operations/linux_cpu_runbook.md](../operations/linux_cpu_runbook.md) for full
-prerequisite list.
+See [../operations/linux_cpu_runbook.md](../operations/linux_cpu_runbook.md) for the full
+prerequisite list. GHC, Cabal, `kubectl`, `helm`, `kind`, and `protoc` are baked into the
+`hostbootstrap` base image; no host-level Haskell toolchain is required.
 
 ## Build and test loop
 
 ### Apple Silicon
 
 ```bash
-./bootstrap/apple-silicon.sh up        # one-time: install prereqs, build binary, bring cluster up
+hostbootstrap doctor                                        # one-time: install prereqs
+hostbootstrap cluster up                                    # build binary, install LaunchDaemon, bring kind cluster up
 ./.build/daemon-substrate-test test unit
 ./.build/daemon-substrate-test test integration
 ./.build/daemon-substrate-test cluster status
-./bootstrap/apple-silicon.sh down      # tear cluster down (preserves ./.data/, ./.build/)
+hostbootstrap cluster down                                  # tear down; preserves ./.data/
 ```
 
 After the first bring-up, `./.build/daemon-substrate-test ...` is the canonical command
-surface. The bootstrap script is only needed when prerequisites change.
+surface for the test commands. `hostbootstrap` is only invoked when the LaunchDaemon or
+prerequisites change.
 
 ### Linux CPU
 
 ```bash
-./bootstrap/linux-cpu.sh up
-docker compose run --rm daemon-substrate daemon-substrate-test test unit
-docker compose run --rm daemon-substrate daemon-substrate-test test integration
-docker compose run --rm daemon-substrate daemon-substrate-test cluster status
-./bootstrap/linux-cpu.sh down
+hostbootstrap doctor
+hostbootstrap cluster up
+hostbootstrap run daemon-substrate-test test unit
+hostbootstrap run daemon-substrate-test test integration
+hostbootstrap run daemon-substrate-test cluster status
+hostbootstrap cluster down
 ```
 
-Always invoke through `docker compose run --rm`. The container has the launcher image, the
-GHC toolchain, and the kind binary.
+`hostbootstrap run <cmd...>` dispatches into the project container, which carries the
+toolchain (from the base image) and the compiled `daemon-substrate-test` binary.
 
 ## What's in `./.build/` and `./.data/`
 
@@ -86,9 +102,10 @@ GHC toolchain, and the kind binary.
   configs, the kubeconfig (`daemon-substrate.kubeconfig`), and the chosen edge port
   (`edge-port.json`).
 - `./.data/`: durable cluster state (PV-backing files), runtime state (Pulsar / MinIO / Harbor
-  data). On Linux this is the only bind mount into the launcher container.
+  data). On Linux this is the only bind mount into the project container.
 
-Neither directory is checked in. Bootstrap `down` preserves both so a fresh `up` is fast.
+Neither directory is checked in. `hostbootstrap cluster down` preserves both so a fresh `up`
+is fast; `hostbootstrap cluster delete` (thorough teardown) also preserves `./.data/`.
 
 ## When things go wrong
 
@@ -97,13 +114,15 @@ Neither directory is checked in. Bootstrap `down` preserves both so a fresh `up`
   roughly every 30 seconds; wall-clock duration alone is not failure.
 - The kubeconfig path is repo-local — your shell's `~/.kube/config` is never modified. To run
   `kubectl` directly: `KUBECONFIG=./.build/daemon-substrate.kubeconfig kubectl get pods -A`
-  (Apple) or via the launcher container on Linux.
+  (Apple) or via `hostbootstrap run` on Linux.
 - If the cluster gets into a wedged state, `daemon-substrate-test cluster down` followed by
-  `daemon-substrate-test cluster up` is the reset switch. `./.data/` is preserved across that
-  cycle.
+  `daemon-substrate-test cluster up` is the inner reset switch; `hostbootstrap cluster down`
+  followed by `hostbootstrap cluster up` is the outer reset. `./.data/` is preserved across
+  both.
 
 ## Cross-references
 
+- hostbootstrap integration: [../engineering/hostbootstrap_integration.md](../engineering/hostbootstrap_integration.md)
 - Testing strategy: [testing_strategy.md](testing_strategy.md)
 - Apple-specific runbook: [../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md)
 - Linux-specific runbook: [../operations/linux_cpu_runbook.md](../operations/linux_cpu_runbook.md)

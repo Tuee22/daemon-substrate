@@ -45,8 +45,8 @@ Land `app/test/Main.hs` implementing the command surface described in
 
 #### Validation
 
-`./.build/daemon-substrate-test --help` (Apple) and `docker compose run --rm daemon-substrate
-daemon-substrate-test --help` (Linux) both succeed and list every documented subcommand.
+`./.build/daemon-substrate-test --help` (Apple) and `hostbootstrap run daemon-substrate-test
+--help` (Linux) both succeed and list every documented subcommand.
 
 #### Remaining Work
 
@@ -74,8 +74,9 @@ publication, cache cold / warm paths, dedup, failure / retry.
 
 #### Validation
 
-Cluster brought up via `daemon-substrate-test cluster up`, then `daemon-substrate-test test
-integration` exits 0 on both cohorts. Test output names which cohort it exercised.
+Cluster brought up via `hostbootstrap cluster up` (which delegates inward to
+`daemon-substrate-test cluster up`), then `daemon-substrate-test test integration` exits 0 on
+both cohorts. Test output names which cohort it exercised.
 
 #### Remaining Work
 

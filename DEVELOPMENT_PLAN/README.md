@@ -7,6 +7,15 @@
 > **Purpose**: Phase plan orientation. Names the phases in execution order, reports the
 > current status of each, and links to the standards and inventory documents.
 
+## Foundation
+
+The build, lifecycle, and bootstrap layer is provided by
+[`hostbootstrap`](https://github.com/Tuee22/hostbootstrap); see
+[`00-overview.md`](00-overview.md) and
+[`../documents/engineering/hostbootstrap_integration.md`](../documents/engineering/hostbootstrap_integration.md).
+The phases below focus on the Haskell library, the in-cluster reconcilers, and the
+`hostbootstrap.dhall` plus thin project Dockerfile that wire the two layers together.
+
 ## Phases
 
 | Phase | Title | Status |

@@ -25,6 +25,13 @@ This is the first phase where the cohort split (`apple-silicon` vs `linux-cpu`) 
 visible in the implementation: the worker Deployment is conditionally rendered, the worker
 Dhall config differs slightly.
 
+On Apple Silicon the worker is *not* deployed in the kind cluster; it runs host-native under a
+system-scope LaunchDaemon installed by
+[`hostbootstrap`](https://github.com/Tuee22/hostbootstrap) per the `HostDaemon` model declared
+in `hostbootstrap.dhall` (Phase 6). The chart still renders Harbor / Pulsar / MinIO /
+orchestrator on both cohorts; only the worker Deployment toggles. See
+[`../documents/engineering/hostbootstrap_integration.md`](../documents/engineering/hostbootstrap_integration.md).
+
 ## Sprints
 
 ### Sprint 5.1: Cluster lifecycle Haskell module [Planned]
