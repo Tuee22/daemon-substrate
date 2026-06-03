@@ -27,7 +27,29 @@ Removal owning phase is Phase 0 Sprint 0.6 (documentation); replacements ship in
 - **`daemon-substrate-linux-cpu:local` launcher image** — planned but never implemented;
   replaced by the thin `docker/linux-substrate.Dockerfile` that inherits from the
   `hostbootstrap` base tag. Owning phase: phase-0, sprint 0.6. Replacement landing in
-  phase-6, sprint 6.2.
+  phase-7, sprint 7.2.
+
+### To be deleted in consumer repositories (tracked here for visibility)
+
+These items belong to consumer repositories (`infernix`, `jitML`) and must be removed when
+those repositories refactor to consume `daemon-substrate` as a library. The entries are
+recorded here so the substrate's contract stays honest.
+
+- **`infernix/src/Infernix/Service.hs` `acquireEngineLock` / `engine.lock`** — `flock(2)`-based
+  exclusion of multiple engine daemons. Substrate `development_plan_standards.md § K` forbids
+  OS-level concurrency guards in worker code; Pulsar's at-most-one-active-consumer-per-message
+  guarantee on shared subscriptions enforces the invariant correctly. Removal during
+  infernix's `daemon-substrate` consumption refactor.
+- **`jitML/src/JitML/Service/Capabilities.hs` and sibling subprocess / filesystem
+  implementations** — superseded by `Daemon.Pulsar` / `Daemon.MinIO` / `Daemon.Harbor` /
+  `Daemon.Kubectl` once jitML consumes the substrate library. Removal during jitML's
+  `daemon-substrate` consumption refactor.
+- **`jitML/src/JitML/Cluster/*`** — superseded by `Daemon.Cluster.*` once jitML consumes the
+  substrate library. Project-specific Dhall body remains; reconciler logic moves to the
+  library.
+- **`jitML/src/JitML/Checkpoint/Store.hs` generic retention/GC logic** — superseded by
+  `Daemon.MinIO.Store` plus `Daemon.Reconciler`'s orphan-scan. jitML's training-specific
+  manifest body (with metric semantics) stays in jitML; the store mechanics move out.
 
 ## Completed
 

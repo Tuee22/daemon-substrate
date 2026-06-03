@@ -33,58 +33,75 @@ engineering, and operations docs the later phases reference.
 
 This phase is open. Its closure requires completion of every documentation obligation called
 out by Sprints 0.1 – 0.4. The doc validator (Phase 0 Sprint 0.5) is **deferred to Phase 7
-Sprint 7.4**, where it lands as part of the test-lint gate; Phase 0 closure does not depend
+Sprint 8.5**, where it lands as part of the test-lint gate; Phase 0 closure does not depend
 on it.
 
 ### Phase 1 — library scaffolding and cabal package
 
 Establish `daemon-substrate.cabal`, `cabal.project` (GHC 9.12 pinned, matching the
-`hostbootstrap` base image), the empty `src/Daemon/` module skeleton, and a no-op CI build
-that proves `cabal build all` succeeds. No public typeclass surface yet; just the structural
-shell.
+`hostbootstrap` base image), the empty `src/Daemon/` module skeleton (including
+`Daemon.Sub` — the typed `Subprocess` boundary that every later phase shells out through),
+and a no-op CI build that proves `cabal build all` succeeds. No public typeclass surface yet;
+just the structural shell.
 
 Depends on Phase 0 closing the documentation standards so the cabal layout doc can land
 alongside the actual cabal file.
 
-### Phase 2 — typeclasses: Pulsar, MinIO, Engine
+### Phase 2 — capability typeclasses (Pulsar, MinIO, Harbor, Kubectl) + admin surfaces
 
-Land the public typeclass surface: `HasPulsar`, `HasMinIO`, `HasEngine` (with both
-`SubprocessEngine` and `NativeEngine` variants). Ship reference mock instances under the test
-tree so the typeclasses can be exercised in unit tests without external services.
-
-Also lands the `proto/` schemas listed in
-[`../documents/reference/proto_surface.md`](../documents/reference/proto_surface.md) and the
-generated `Daemon.Proto.*` modules.
+Land the four transport / cluster-I/O typeclasses (`HasPulsar`, `HasMinIO`, `HasHarbor`,
+`HasKubectl`) with subprocess-backed real implementations and filesystem-backed test
+implementations. Land the generic content-addressed `Daemon.MinIO.Store` (blobs / manifests /
+pointers + CAS). Land the typed admin surfaces (`Daemon.Pulsar.Admin`, `Daemon.MinIO.Admin`)
+that the reconciler will drive in Phase 5.
 
 Depends on Phase 1 because typeclass modules need a cabal stanza to live in.
 
-### Phase 3 — daemon lifecycle and config
+### Phase 3 — BootConfig / LiveConfig / LifecyclePolicy + lifecycle + signal handling
 
-Land `BootConfig role app`, `DaemonRuntime`, `LifecyclePhase`, the signal handlers, the
-`/readyz` and `/healthz` route shapes, and the Dhall decoder for `BootConfig`. This is the
-scaffolding that the worker and orchestrator base loops sit inside.
+Land `BootConfig role app`, `LiveConfig` (SIGHUP-reloadable), `LifecyclePolicy` Dhall decoders
+(`TopicLifecycle` + `BucketLifecycle`), the 7-phase lifecycle state machine
+(`Load → Prereq → Acquire → Ready → Serve → Drain → Exit`), the SIGHUP / SIGTERM handlers,
+the `/readyz` / `/healthz` / `/metrics` endpoints, and the `runService` entry point.
 
-Depends on Phase 2 because the lifecycle wires through `HasPulsar` / `HasMinIO` instances.
+Depends on Phase 2 because the lifecycle wires through the capability typeclasses.
 
-### Phase 4 — worker and orchestrator base loops + mock engine
+### Phase 4 — engine typeclass + mock engine + protobuf envelopes + audit topic
 
-Land `runWorker` and `runOrchestrator`. Land the test harness's mock engine implementation
-(`NativeEngine` variant that returns placeholder bytes; mocks MinIO reads; mocks local cache
-I/O). Land the `daemon-substrate-unit` test stanza coverage for the workflow-state and
-consumer-step logic.
+Land `HasEngine` with `SubprocessEngine` / `NativeEngine` variants. Land the mock engine
+(`Daemon.Test.MockEngine`) — deterministic SHA-256 placeholder, no real ML. Land the
+substrate-owned protobuf envelopes (`Control`, `Lifecycle`, `OrchestratorWorker`, `Audit`)
+and the generated `Daemon.Proto.*` modules. Land `Daemon.Audit` — the compacted-topic helper
+(keyed write + replay on startup) the reconciler depends on.
 
-Depends on Phase 3 because the base loops use the lifecycle scaffolding.
+Depends on Phase 3 because the engine seam reads `BootConfig` and the audit helper reads the
+lifecycle phase.
 
-### Phase 5 — kind cluster and Helm chart
+### Phase 5 — base loops: worker, orchestrator, bridge, fan-in bootstrap, reconciler
 
-Land `src/Daemon/Cluster/Kind.hs` (cluster bring-up / teardown / status), the `chart/`
-directory with Harbor / Pulsar / MinIO chart dependencies and the orchestrator / worker
-Deployment templates, and the `dhall/` configs for both roles. ConfigMap rendering wired up
-so cluster bring-up materializes the staged Dhall files into the cluster.
+Land the five base loops, `Daemon.Consumer` (consumer-batch primitive with dedup), and
+`Daemon.WorkflowState` (append-only workflow event ownership over Pulsar):
 
-Depends on Phase 4 because the chart needs working daemon binaries to deploy.
+- `runWorker` — Pulsar consumer with dedup → `HasEngine` → result publish
+- `runOrchestrator` — fan-in / batch / fan-out / WAN hydration
+- `runBridge` — consume one topic, transform, publish another
+- `runFanInBootstrap` — request → do work → write to MinIO → publish ready event
+- `runReconciler` — leader-elected (Pulsar Failover sub) Pulsar + MinIO lifecycle reconciler,
+  running concurrently with `runOrchestrator` in the same orchestrator process
 
-### Phase 6 — bootstrap and outer container
+Depends on Phase 4 because the loops dispatch through `HasEngine` and publish to the audit
+topic.
+
+### Phase 6 — kind cluster and Helm chart
+
+Land the cluster bring-up tree `src/Daemon/Cluster/{Kind,Storage,Helm,Harbor,Pulsar,MinIO,Workload,EdgePort}.hs`,
+the `chart/` directory with Harbor / Pulsar / MinIO chart dependencies and the orchestrator /
+worker Deployment templates, and the `dhall/` configs for both roles. ConfigMap rendering
+wired up so cluster bring-up materializes the staged Dhall files into the cluster.
+
+Depends on Phase 5 because the chart needs working daemon binaries to deploy.
+
+### Phase 7 — hostbootstrap.dhall and thin project Dockerfile
 
 Land `hostbootstrap.dhall` at the repository root (declaring `Container` for Linux CPU and
 `HostDaemon` for Apple Silicon) and the thin `docker/linux-substrate.Dockerfile`
@@ -94,28 +111,31 @@ detection, host-prereq install, container / daemon lifecycle, and LaunchDaemon i
 are all handled by `hostbootstrap`; this phase only ships the project-side config and
 Dockerfile.
 
-Depends on Phase 5 because the inner reconcilers (kind / Harbor / Pulsar / MinIO /
+Depends on Phase 6 because the inner reconcilers (kind / Harbor / Pulsar / MinIO /
 orchestrator / worker) must exist before the outer entry can deliver a `Ready` cluster.
 
-### Phase 7 — test harness integration
+### Phase 8 — test harness integration
 
-Land the `daemon-substrate-test` executable, the `daemon-substrate-integration` cabal test
-stanza, and the end-to-end coverage described in
+Land the `daemon-substrate-test` executable, the four cabal test stanzas
+(`daemon-substrate-unit`, `daemon-substrate-lifecycle`, `daemon-substrate-integration`,
+`daemon-substrate-haskell-style`), and the end-to-end coverage described in
 [`../documents/development/testing_strategy.md`](../documents/development/testing_strategy.md):
 cluster lifecycle, orchestrator → worker handoff, MinIO fetch, mock engine result publish,
-cache lifecycle, pod replacement, MinIO replacement.
+cache lifecycle, pod replacement, MinIO replacement, lifecycle reconciler workflows across
+all four `TopicLifecycle` modes, leader-election failover, orphan-scan safety windows,
+audit-topic replay.
 
-Depends on Phase 6 because integration tests need the bootstrap-driven cluster bring-up.
+Depends on Phase 7 because integration tests need the bootstrap-driven cluster bring-up.
 
 ## Cohort obligations
 
-Every phase that touches the test harness (Phase 5 onward) carries both cohort obligations:
+Every phase that touches the test harness (Phase 6 onward) carries both cohort obligations:
 Apple Silicon and Linux CPU. A phase cannot move to `Done` until both cohorts have validated
 the same phase state. See [development_plan_standards.md § Q](development_plan_standards.md).
 
 ## What is intentionally not a phase
 
-- A separate doc-validator phase. The validator is implemented in **Phase 7 Sprint 7.4** as
+- A separate doc-validator phase. The validator is implemented in **Phase 8 Sprint 8.5** as
   part of the test-lint gate; Phase 0 Sprint 0.5 is a deferred-and-cross-referenced
   placeholder rather than its own phase.
 - A separate "release" phase. The library is consumed by sibling path; there is no Hackage

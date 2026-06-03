@@ -27,6 +27,7 @@ documents/
 | Documentation rules | [documentation_standards.md](documentation_standards.md) |
 | Daemon roles (Worker, Orchestrator) | [architecture/daemon_roles.md](architecture/daemon_roles.md) |
 | Pulsar/MinIO source-of-truth split | [architecture/pulsar_minio_ssot.md](architecture/pulsar_minio_ssot.md) |
+| Pulsar / MinIO lifecycle policy | [architecture/lifecycle_policy.md](architecture/lifecycle_policy.md) |
 | Library consumption model | [architecture/library_consumption_model.md](architecture/library_consumption_model.md) |
 | Cabal package layout | [engineering/cabal_layout.md](engineering/cabal_layout.md) |
 | Test-harness Pulsar topics | [engineering/pulsar_topics.md](engineering/pulsar_topics.md) |

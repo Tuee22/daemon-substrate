@@ -2,7 +2,7 @@
 
 **Status**: Authoritative source
 **Supersedes**: N/A
-**Referenced by**: [../README.md](../README.md), [../../README.md](../../README.md), [pulsar_minio_ssot.md](pulsar_minio_ssot.md), [library_consumption_model.md](library_consumption_model.md), [../engineering/cluster_topology.md](../engineering/cluster_topology.md), [../../DEVELOPMENT_PLAN/development_plan_standards.md](../../DEVELOPMENT_PLAN/development_plan_standards.md)
+**Referenced by**: [../README.md](../README.md), [../../README.md](../../README.md), [pulsar_minio_ssot.md](pulsar_minio_ssot.md), [library_consumption_model.md](library_consumption_model.md), [lifecycle_policy.md](lifecycle_policy.md), [../engineering/cluster_topology.md](../engineering/cluster_topology.md), [../../DEVELOPMENT_PLAN/development_plan_standards.md](../../DEVELOPMENT_PLAN/development_plan_standards.md)
 
 > **Purpose**: Define the two daemon roles `daemon-substrate` supports — **Worker** and
 > **Orchestrator** — including their responsibilities, runtime locations, and the invariants each
@@ -129,6 +129,19 @@ provides the base loop (`runOrchestrator`), the lifecycle scaffolding, and the t
 `BootConfig role app` plug. Consumers (`infernix`, `jitML`) supply their own application
 logic and Dhall shape via the `app` type parameter. The substrate does not prescribe a
 canonical orchestrator behavior; it prescribes the shape any orchestrator must fit into.
+
+### Concurrent reconciler thread
+
+The orchestrator daemon also runs `runReconciler` as a **second concurrent thread inside the
+same process**. The reconciler is leader-elected via a Pulsar Failover subscription on a
+dedicated control topic; only one orchestrator replica's reconciler thread is active at a
+time, even though every replica's `runOrchestrator` thread runs concurrently for fan-in /
+fan-out work. The two threads share the substrate's capability clients (`HasPulsar`,
+`HasMinIO`, `HasHarbor`) but share no mutable state.
+
+The reconciler owns the lifecycle of every Pulsar topic and MinIO bucket / object declared in
+the consumer's `LifecyclePolicy` (creation, archival, deletion, MinIO orphan-scan). See
+[lifecycle_policy.md](lifecycle_policy.md) for the full design.
 
 ## What is not a daemon role
 

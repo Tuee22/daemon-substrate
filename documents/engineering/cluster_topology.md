@@ -44,6 +44,13 @@ chart values. No anti-affinity rule is required because two orchestrator pods on
 node duplicate no expensive resources (no GPU, no large weight cache, no exclusive
 device handles).
 
+Each orchestrator pod also runs `Daemon.Reconciler.runReconciler` as a concurrent thread
+alongside `Daemon.Orchestrator.runOrchestrator`. The reconciler is **leader-elected** via a
+Pulsar Failover subscription on a dedicated control topic — only one orchestrator pod's
+reconciler thread is active at a time, even though every pod's `runOrchestrator` thread runs
+concurrently for fan-in / fan-out work. See
+[`../architecture/lifecycle_policy.md`](../architecture/lifecycle_policy.md).
+
 ### WAN egress
 
 The orchestrator pods are the only in-cluster workloads permitted to reach external

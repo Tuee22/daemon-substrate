@@ -12,8 +12,9 @@
 - One library (`daemon-substrate`) carries every public `Daemon.*` module that consumers depend
   on.
 - One executable (`daemon-substrate-test`) drives the test harness.
-- Three test-suite stanzas: `daemon-substrate-unit`, `daemon-substrate-integration`,
-  `daemon-substrate-haskell-style`. All use `type: exitcode-stdio-1.0`.
+- Four test-suite stanzas: `daemon-substrate-unit`, `daemon-substrate-lifecycle`,
+  `daemon-substrate-integration`, `daemon-substrate-haskell-style`. All use
+  `type: exitcode-stdio-1.0`.
 - No sublibrary split, no separate `internal` package. Consumers depend on the top-level
   library only.
 
@@ -25,22 +26,53 @@ daemon-substrate/
 ├── cabal.project          # GHC pin (9.12, matching hostbootstrap base), allow-newer carve-outs
 ├── src/                   # library sources
 │   └── Daemon/
-│       ├── Pulsar.hs
-│       ├── MinIO.hs
-│       ├── MinIO/Cache.hs
-│       ├── Engine.hs
-│       ├── Lifecycle.hs
-│       ├── Config.hs
-│       ├── Worker.hs
-│       ├── Orchestrator.hs
+│       ├── Sub.hs              # typed Subprocess + runStreaming (single shell-out seam)
+│       ├── Pulsar.hs           # HasPulsar
+│       ├── Pulsar/Admin.hs     # typed Pulsar admin operations
+│       ├── MinIO.hs            # HasMinIO
+│       ├── MinIO/Cache.hs      # ephemeral cache wrapper
+│       ├── MinIO/Store.hs      # content-addressed blob/manifest/pointer + CAS
+│       ├── MinIO/Admin.hs      # typed bucket admin operations
+│       ├── Harbor.hs           # HasHarbor
+│       ├── Kubectl.hs          # HasKubectl
+│       ├── Engine.hs           # HasEngine + SubprocessEngine/NativeEngine variants
+│       ├── Config/
+│       │   ├── BootConfig.hs
+│       │   ├── LiveConfig.hs
+│       │   └── LifecyclePolicy.hs
+│       ├── Lifecycle.hs        # 7-phase machine + runService entry
+│       ├── Signal.hs           # SIGHUP/SIGTERM/SIGINT handling
+│       ├── Audit.hs            # compacted-topic helper
+│       ├── Consumer.hs         # consumer-batch primitive + dedup
+│       ├── Worker.hs           # runWorker base loop
+│       ├── Orchestrator.hs     # runOrchestrator base loop
+│       ├── Bridge.hs           # runBridge base loop
+│       ├── Bootstrap.hs        # runFanInBootstrap base loop
+│       ├── Reconciler.hs       # runReconciler base loop (leader-elected lifecycle)
 │       ├── WorkflowState.hs
-│       ├── Cluster/           # test-harness-only; not part of public surface
-│       └── Proto/             # generated protobuf bindings
+│       ├── Cluster/            # test-harness-only; not part of public surface
+│       │   ├── Kind.hs
+│       │   ├── Storage.hs
+│       │   ├── Helm.hs
+│       │   ├── Harbor.hs
+│       │   ├── Pulsar.hs
+│       │   ├── MinIO.hs
+│       │   ├── Workload.hs
+│       │   └── EdgePort.hs
+│       ├── Test/               # exposed for daemon-substrate-test; not consumer-facing
+│       │   ├── FilesystemPulsar.hs
+│       │   ├── FilesystemMinIO.hs
+│       │   ├── FilesystemHarbor.hs
+│       │   ├── FilesystemKubectl.hs
+│       │   └── MockEngine.hs
+│       └── Proto/              # generated protobuf bindings
 ├── app/
 │   └── test/
 │       └── Main.hs        # daemon-substrate-test executable entrypoint
 ├── test/
 │   ├── unit/
+│   │   └── Spec.hs
+│   ├── lifecycle/
 │   │   └── Spec.hs
 │   ├── integration/
 │   │   └── Spec.hs
@@ -89,13 +121,19 @@ executable is for the harness only.
 
 ## Test-suite stanzas
 
-All three test suites use `exitcode-stdio-1.0`:
+All four test suites use `exitcode-stdio-1.0`:
 
 ```cabal
 test-suite daemon-substrate-unit
   type:             exitcode-stdio-1.0
   main-is:          Spec.hs
   hs-source-dirs:   test/unit
+  build-depends:    daemon-substrate, hspec, ...
+
+test-suite daemon-substrate-lifecycle
+  type:             exitcode-stdio-1.0
+  main-is:          Spec.hs
+  hs-source-dirs:   test/lifecycle
   build-depends:    daemon-substrate, hspec, ...
 
 test-suite daemon-substrate-integration
@@ -113,9 +151,10 @@ test-suite daemon-substrate-haskell-style
 
 | Suite | What it exercises |
 |-------|-------------------|
-| `daemon-substrate-unit` | pure logic: protobuf encode / decode, `WorkflowOwner` fold, `BootConfig` decoders, cache eviction policies |
-| `daemon-substrate-integration` | end-to-end with a real kind cluster brought up by `daemon-substrate-test cluster up` |
-| `daemon-substrate-haskell-style` | `ormolu` and `hlint` gates run against `src/` |
+| `daemon-substrate-unit` | pure logic: protobuf encode / decode, `WorkflowOwner` fold, `BootConfig` / `LiveConfig` / `LifecyclePolicy` decoders, cache eviction policies, `Store` semantics over `FilesystemMinIO`, `Consumer` dedup over `FilesystemPulsar`, reconciler tick over filesystem backends |
+| `daemon-substrate-lifecycle` | daemon spawned as a real process; SIGHUP / SIGTERM / SIGINT exercised; `/readyz` polled; `LiveConfig` reload validated. No cluster needed. |
+| `daemon-substrate-integration` | end-to-end with a real kind cluster brought up by `hostbootstrap cluster up` (delegating inward to `daemon-substrate-test cluster up`) |
+| `daemon-substrate-haskell-style` | `ormolu` and `hlint` gates run against `src/`, plus the doc validator |
 
 The integration suite is the one that depends on a running cluster. It is invoked through
 `daemon-substrate-test test integration`, which performs the cluster preflight before delegating

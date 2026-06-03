@@ -2,7 +2,7 @@
 
 **Status**: Authoritative source
 **Supersedes**: N/A
-**Referenced by**: [../README.md](../README.md), [../architecture/library_consumption_model.md](../architecture/library_consumption_model.md), [../engineering/pulsar_topics.md](../engineering/pulsar_topics.md), [../engineering/mock_engine.md](../engineering/mock_engine.md)
+**Referenced by**: [../README.md](../README.md), [../architecture/library_consumption_model.md](../architecture/library_consumption_model.md), [../architecture/lifecycle_policy.md](../architecture/lifecycle_policy.md), [../engineering/pulsar_topics.md](../engineering/pulsar_topics.md), [../engineering/mock_engine.md](../engineering/mock_engine.md)
 
 > **Purpose**: Authoritative inventory of every `.proto` file in `proto/`, the messages each
 > defines, and the boundary between substrate-owned envelopes and consumer-owned (or
@@ -25,7 +25,8 @@ proto/
 │   ├── workflow.proto            # WorkflowEvent envelope, ObjectRef, EventId
 │   ├── control.proto             # ControlEnvelope (Drain, Reload, etc.)
 │   ├── orchestrator_worker.proto # OrchestratorToWorker, WorkerResult
-│   └── lifecycle.proto           # LifecyclePhase, ReadinessReport (for /readyz)
+│   ├── lifecycle.proto           # LifecyclePhase, ReadinessReport (for /readyz)
+│   └── audit.proto               # AuditEvent, ResourceRef, ReconcileAction (for runReconciler)
 └── daemon_substrate_test/
     └── mock.proto                # MockRequest, MockBatch, MockResult, MockPayload
 ```
@@ -118,13 +119,14 @@ syntax = "proto3";
 package daemon_substrate;
 
 enum LifecyclePhase {
-  LIFECYCLE_PHASE_UNSPECIFIED   = 0;
-  LIFECYCLE_PHASE_BOOTSTRAP     = 1;
-  LIFECYCLE_PHASE_ACQUIRE       = 2;
-  LIFECYCLE_PHASE_PROBE         = 3;
-  LIFECYCLE_PHASE_READY         = 4;
-  LIFECYCLE_PHASE_DRAINING      = 5;
-  LIFECYCLE_PHASE_EXIT          = 6;
+  LIFECYCLE_PHASE_UNSPECIFIED = 0;
+  LIFECYCLE_PHASE_LOAD        = 1;
+  LIFECYCLE_PHASE_PREREQ      = 2;
+  LIFECYCLE_PHASE_ACQUIRE     = 3;
+  LIFECYCLE_PHASE_READY       = 4;
+  LIFECYCLE_PHASE_SERVE       = 5;
+  LIFECYCLE_PHASE_DRAIN       = 6;
+  LIFECYCLE_PHASE_EXIT        = 7;
 }
 
 message ReadinessReport {
@@ -132,6 +134,44 @@ message ReadinessReport {
   string         phase_detail       = 2;
   int64          heartbeat_at      = 3;   // unix nanoseconds
   bool           ready             = 4;
+}
+```
+
+### `daemon_substrate/audit.proto`
+
+```proto
+syntax = "proto3";
+package daemon_substrate;
+
+// Identifies a substrate-managed resource for the compacted audit topic. The compaction key
+// is rendered as "<kind>:<id>", so each resource has at most one live record.
+message ResourceRef {
+  string kind = 1;   // "pulsar-topic" | "minio-bucket" | "minio-object" | "pulsar-subscription"
+  string id   = 2;   // topic name, bucket name, object key, etc.
+}
+
+// The kind of reconciliation action the leader executed for a resource. This is the value
+// stored in the compacted audit topic, keyed by ResourceRef.
+enum ReconcileAction {
+  RECONCILE_ACTION_UNSPECIFIED = 0;
+  RECONCILE_ACTION_CREATED     = 1;
+  RECONCILE_ACTION_CONFIGURED  = 2;   // retention / compaction / dedup-window applied
+  RECONCILE_ACTION_TERMINATED  = 3;   // Pulsar topic terminated (no further writes)
+  RECONCILE_ACTION_EXPORTED    = 4;   // contents archived to MinIO
+  RECONCILE_ACTION_IMPORTED    = 5;   // FiniteSession resume restored archive into topic
+  RECONCILE_ACTION_DELETED     = 6;   // resource removed
+  RECONCILE_ACTION_NOOP        = 7;   // observed == desired; recorded for idempotency proof
+}
+
+// A single audit record. Published by the reconciler leader after every executed action.
+// Consumed by future leaders on startup (via Daemon.Audit.auditReplay) to reconstruct
+// "what is already done" without re-executing.
+message AuditEvent {
+  ResourceRef     resource         = 1;
+  ReconcileAction action           = 2;
+  int64           executed_at      = 3;   // unix nanoseconds, monotonic per leader
+  string          leader_replica   = 4;   // pod / process identity (debug aid)
+  string          detail           = 5;   // free-form (e.g., archive object key)
 }
 ```
 
@@ -177,6 +217,7 @@ Protobuf code generation produces modules under `src/Daemon/Proto/`:
 - `Daemon.Proto.Control`
 - `Daemon.Proto.OrchestratorWorker`
 - `Daemon.Proto.Lifecycle`
+- `Daemon.Proto.Audit`
 - `Daemon.Proto.Test.Mock` (test-harness only)
 
 The generator is `proto-lens-setup`-driven; the Cabal stanza for the library declares both

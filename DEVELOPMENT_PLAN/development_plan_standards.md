@@ -86,12 +86,13 @@ DEVELOPMENT_PLAN/
 ├── system-components.md
 ├── phase-0-documentation-and-governance.md
 ├── phase-1-library-scaffolding-and-cabal-package.md
-├── phase-2-typeclasses-pulsar-minio-engine.md
-├── phase-3-daemon-lifecycle-and-config.md
-├── phase-4-worker-and-orchestrator-base-loops.md
-├── phase-5-kind-cluster-and-helm-chart.md
-├── phase-6-bootstrap-and-outer-container.md
-├── phase-7-test-harness-integration.md
+├── phase-2-capability-typeclasses-and-admin-surfaces.md
+├── phase-3-bootconfig-liveconfig-lifecycle.md
+├── phase-4-engine-mock-protos-audit.md
+├── phase-5-base-loops.md
+├── phase-6-cluster-bringup-tree.md
+├── phase-7-hostbootstrap-and-project-dockerfile.md
+├── phase-8-test-harness-integration.md
 └── legacy-tracking-for-deletion.md
 ```
 

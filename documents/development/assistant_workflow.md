@@ -50,6 +50,9 @@ Before making any non-trivial change, read:
 - [../engineering/hostbootstrap_integration.md](../engineering/hostbootstrap_integration.md) —
   the canonical infrastructure layer this repository sits on top of, and the
   `hostbootstrap` / `daemon-substrate` ownership boundary.
+- [../architecture/lifecycle_policy.md](../architecture/lifecycle_policy.md) — how the
+  substrate owns Pulsar topic and MinIO bucket / object lifecycle (declarative `LifecyclePolicy`
+  + leader-elected reconciler running concurrently on the orchestrator).
 
 ## House style
 

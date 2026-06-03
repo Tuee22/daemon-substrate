@@ -12,11 +12,15 @@
 
 - Consumers depend on `daemon-substrate` as a **Haskell library** via `cabal.project`'s
   `path:` mechanism. No binary, no Docker image, no published package.
-- The library exposes substrate-agnostic typeclasses (`HasPulsar`, `HasMinIO`, `HasEngine`),
-  role base loops (`runWorker`, `runOrchestrator`), and a typed `BootConfig role app` shape.
+- The library exposes substrate-agnostic typeclasses (`HasPulsar`, `HasMinIO`, `HasHarbor`,
+  `HasKubectl`, `HasEngine`), five base loops (`runWorker`, `runOrchestrator`, `runBridge`,
+  `runFanInBootstrap`, `runReconciler`), the `BootConfig role app` / `LiveConfig` /
+  `LifecyclePolicy` configuration shapes, and the `runService` entry point.
 - The consumer brings the engine, the substrate-specific code (Metal FFI, CUDA FFI, etc.), the
-  Dhall layout, the protobuf payload types, and the application data type plugged into
-  `BootConfig`.
+  Dhall layout, the protobuf payload types, the application data type plugged into
+  `BootConfig`, the `OrchestratorBehavior` callbacks (fan-in / batch / fan-out / hydrate /
+  bridge), and the `LifecyclePolicy` declaring which Pulsar topics and MinIO buckets it
+  wants the substrate to manage.
 
 ## Dependency mechanism
 
@@ -52,29 +56,50 @@ The library exposes these public modules (names finalized in the relevant phase)
 
 | Module | Purpose | Owner |
 |--------|---------|-------|
+| `Daemon.Sub` | typed `Subprocess` boundary; every shell-out goes through here | library |
 | `Daemon.Pulsar` | `HasPulsar` typeclass and `SubscriptionMode` (`Shared`, `KeyShared`, `Exclusive`, `Failover`) | library |
+| `Daemon.Pulsar.Admin` | typed Pulsar admin operations (create / delete / terminate / set retention / export / import) | library |
 | `Daemon.MinIO` | `HasMinIO` typeclass with CAS / ETag semantics | library |
 | `Daemon.MinIO.Cache` | non-authoritative ephemeral cache wrapper | library |
+| `Daemon.MinIO.Store` | generic content-addressed store (blobs / manifests / pointers + CAS) | library |
+| `Daemon.MinIO.Admin` | typed MinIO bucket operations (create / lifecycle / list / delete) | library |
+| `Daemon.Harbor` | `HasHarbor` typeclass (image registry operations) | library |
+| `Daemon.Kubectl` | `HasKubectl` typeclass (cluster resource operations) | library |
 | `Daemon.Engine` | `HasEngine` typeclass and the `SubprocessEngine` / `NativeEngine` sum | library |
-| `Daemon.Lifecycle` | `DaemonRuntime`, `LifecyclePhase`, signal handling | library |
-| `Daemon.Config` | `BootConfig role app`, Dhall decoders, role tag | library |
+| `Daemon.Config.BootConfig` | `BootConfig role app`, Dhall decoders, role tag | library |
+| `Daemon.Config.LiveConfig` | SIGHUP-reloadable runtime config (retry policy, dedup cache, drain deadline) | library |
+| `Daemon.Config.LifecyclePolicy` | Dhall decoders for `TopicLifecycle` / `BucketLifecycle` / `LifecyclePolicy` | library |
+| `Daemon.Lifecycle` | 7-phase machine (`Load → Prereq → Acquire → Ready → Serve → Drain → Exit`), `runService` entry | library |
+| `Daemon.Signal` | SIGHUP / SIGTERM / SIGINT handling | library |
+| `Daemon.Audit` | compacted-topic helper for reconciler audit log | library |
+| `Daemon.Consumer` | consumer-batch primitive + `HandlerRouter` + dedup cache | library |
 | `Daemon.Worker` | `runWorker` base loop | library |
 | `Daemon.Orchestrator` | `runOrchestrator` base loop | library |
+| `Daemon.Bridge` | `runBridge` base loop (transform one topic, publish another) | library |
+| `Daemon.Bootstrap` | `runFanInBootstrap` base loop (request → MinIO → ready event) | library |
+| `Daemon.Reconciler` | `runReconciler` base loop (leader-elected Pulsar + MinIO lifecycle) | library |
 | `Daemon.WorkflowState` | append-only workflow event ownership over Pulsar topics | library |
-| `Daemon.Proto.*` | protobuf envelopes for substrate-owned messages | library |
+| `Daemon.Proto.*` | protobuf envelopes for substrate-owned messages (workflow, control, orchestrator↔worker, lifecycle, audit) | library |
 
 ## What the library owns
 
-- Pulsar and MinIO transport plumbing (the typeclasses, the substrate-default subscription
-  semantics, the ETag handling).
-- The role-specific base loops (`runWorker`, `runOrchestrator`).
-- The `BootConfig role app` shape, Dhall decoders, and the typed plug for consumer-specific
-  configuration.
+- Pulsar, MinIO, Harbor, and Kubectl transport / cluster-I/O plumbing (the typeclasses, the
+  substrate-default subscription semantics, the ETag handling, the typed subprocess seam).
+- The five base loops (`runWorker`, `runOrchestrator`, `runBridge`, `runFanInBootstrap`,
+  `runReconciler`).
+- The `BootConfig role app` / `LiveConfig` / `LifecyclePolicy` configuration shapes, Dhall
+  decoders, and the typed plug for consumer-specific configuration.
 - Workflow event ownership patterns over Pulsar (the `WorkflowOwner` shape: replay on
-  AcquireClients, append-then-step on write).
-- Lifecycle scaffolding: phases, readiness signaling, signal handlers.
-- Substrate-owned protobuf envelopes (orchestrator-to-worker control, worker status, generic
-  workflow events).
+  `Acquire`, append-then-step on write).
+- Lifecycle scaffolding: 7-phase machine, readiness / health / metrics HTTP endpoints, signal
+  handlers, `runService` entry point.
+- **Full lifecycle ownership of Pulsar topics and MinIO buckets / objects** declared in the
+  consumer's `LifecyclePolicy` — the reconciler creates / configures / archives / deletes
+  topics and buckets, runs MinIO orphan-scan with safety windows, and audits every action to a
+  compacted Pulsar topic. See [lifecycle_policy.md](lifecycle_policy.md).
+- The generic content-addressed `Daemon.MinIO.Store` (blobs / manifests / pointers with CAS).
+- Substrate-owned protobuf envelopes (orchestrator-to-worker, worker status, generic workflow
+  events, audit events).
 
 ## What the consumer owns
 

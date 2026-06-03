@@ -152,12 +152,13 @@ code lands.
 - `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 - `phase-0-documentation-and-governance.md` (this file)
 - `phase-1-library-scaffolding-and-cabal-package.md`
-- `phase-2-typeclasses-pulsar-minio-engine.md`
-- `phase-3-daemon-lifecycle-and-config.md`
-- `phase-4-worker-and-orchestrator-base-loops.md`
-- `phase-5-kind-cluster-and-helm-chart.md`
-- `phase-6-bootstrap-and-outer-container.md`
-- `phase-7-test-harness-integration.md`
+- `phase-2-capability-typeclasses-and-admin-surfaces.md`
+- `phase-3-bootconfig-liveconfig-lifecycle.md`
+- `phase-4-engine-mock-protos-audit.md`
+- `phase-5-base-loops.md`
+- `phase-6-cluster-bringup-tree.md`
+- `phase-7-hostbootstrap-and-project-dockerfile.md`
+- `phase-8-test-harness-integration.md`
 
 #### Validation
 
@@ -168,10 +169,10 @@ Every phase file carries `Status`, `Phase Status`, `Phase Objective`, `Sprints`,
 
 Per-sprint detail inside each phase file fills out as that phase opens.
 
-### Sprint 0.5: Doc validator [Deferred — owned by Phase 7 Sprint 7.4]
+### Sprint 0.5: Doc validator [Deferred — owned by Phase 8 Sprint 8.5]
 
 **Status**: Deferred
-**Blocked by**: Phase 7 Sprint 7.4 (the validator implementation lands as part of the
+**Blocked by**: Phase 8 Sprint 8.5 (the validator implementation lands as part of the
 test-lint gate; Phase 0 closure does not depend on it)
 **Docs to update**: `documents/documentation_standards.md` (Validation section), this file
 
@@ -180,12 +181,12 @@ test-lint gate; Phase 0 closure does not depend on it)
 The doc validator is forward-referenced from
 `documents/documentation_standards.md § Validation` and from the `Documentation Requirements`
 sections of later phase files. Its implementation lives in
-[`phase-7-test-harness-integration.md` Sprint 7.4](phase-7-test-harness-integration.md);
+[`phase-8-test-harness-integration.md` Sprint 8.5](phase-8-test-harness-integration.md);
 see that sprint for deliverables, validation, and remaining-work tracking.
 
 This sprint exists only to document the obligation; it does not own the implementation.
 Phase 0 can close (Status: `Done`) once Sprints 0.1 – 0.4 and 0.6 close, even if Sprint 0.5
-is still `Deferred`. When Sprint 7.4 lands the validator, the
+is still `Deferred`. When Sprint 8.5 lands the validator, the
 `documents/documentation_standards.md` Validation section transitions from forward-looking to
 current-state declarative as a side effect, and this sprint's status becomes `Done` via
 reference to that closure.

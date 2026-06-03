@@ -2,15 +2,21 @@
 
 **Status**: Authoritative source
 **Supersedes**: N/A
-**Referenced by**: [../README.md](../README.md), [../architecture/pulsar_minio_ssot.md](../architecture/pulsar_minio_ssot.md), [cluster_topology.md](cluster_topology.md), [mock_engine.md](mock_engine.md), [../reference/proto_surface.md](../reference/proto_surface.md)
+**Referenced by**: [../README.md](../README.md), [../architecture/pulsar_minio_ssot.md](../architecture/pulsar_minio_ssot.md), [../architecture/lifecycle_policy.md](../architecture/lifecycle_policy.md), [cluster_topology.md](cluster_topology.md), [mock_engine.md](mock_engine.md), [../reference/proto_surface.md](../reference/proto_surface.md)
 
 > **Purpose**: Inventory every Pulsar topic the test harness uses, the subscription mode each
 > subscriber attaches with, and the protobuf payload each topic carries.
 
 ## TL;DR
 
-- Five topics for the test-harness workflow: `test.request`, `test.batch.<cohort>`,
-  `test.result`, `test.control.orchestrator`, `test.control.worker`.
+- Five workflow topics: `test.request`, `test.batch.<cohort>`, `test.result`,
+  `test.control.orchestrator`, `test.control.worker`.
+- Two reconciler-control topics: `control.reconcile.leader.<consumer>` (Failover, for
+  leader election among orchestrator replicas) and `audit.reconcile.<consumer>` (compacted,
+  keyed by `<kind>:<id>` for reconciliation audit log).
+- Lifecycle-mode test topics added per `TopicLifecycle` variant covered in the integration
+  suite (one each of `Ephemeral`, `ContinuousWithArchive`, `FiniteSession`,
+  `OnlineLearning`).
 - Worker fan-out and orchestrator fan-in / fan-back are all `Shared` mode. Multiple
   orchestrator replicas and multiple worker replicas consume the same subscription in
   parallel; Pulsar's `Shared` semantics prevent work duplication.
@@ -30,6 +36,13 @@
 | `test.result` | worker | orchestrator (N replicas) | `Shared` | `WorkerResult { MockResult }` |
 | `test.control.orchestrator` | test driver | orchestrator | `Failover` | `ControlEnvelope { Drain | Reload }` |
 | `test.control.worker` | orchestrator | worker | `Failover` | `ControlEnvelope { Drain | Reload }` |
+| `control.reconcile.leader.daemon-substrate-test` | (any orchestrator replica) | orchestrator (×N; only one active) | `Failover` | leader-election placeholder payload |
+| `audit.reconcile.daemon-substrate-test` | reconciler leader | (consumers / debug; integration tests assert state) | compacted topic, key = `<kind>:<id>` | `AuditEvent` |
+| `test.session.control` | test driver | reconciler leader | `Failover` | session start/end events for `FiniteSession`-mode topics |
+| `test.session.workload.<session-id>` | session producer / consumer | session consumer | `Shared` | created on `session-start`, terminated on `session-end` |
+
+See [../architecture/lifecycle_policy.md](../architecture/lifecycle_policy.md) for the full
+reconciler / audit / leader-election design.
 
 `<cohort>` is `apple-silicon` or `linux-cpu`; the test harness picks the topic by cohort so a
 co-resident Apple worker and Linux worker do not steal each other's batches.

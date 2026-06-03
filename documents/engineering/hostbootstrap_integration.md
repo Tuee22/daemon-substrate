@@ -2,7 +2,7 @@
 
 **Status**: Authoritative source
 **Supersedes**: N/A
-**Referenced by**: [../README.md](../README.md), [../../README.md](../../README.md), [../../CLAUDE.md](../../CLAUDE.md), [../../AGENTS.md](../../AGENTS.md), [../development/local_dev.md](../development/local_dev.md), [../development/assistant_workflow.md](../development/assistant_workflow.md), [../development/testing_strategy.md](../development/testing_strategy.md), [../operations/cluster_bootstrap_runbook.md](../operations/cluster_bootstrap_runbook.md), [../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md), [../operations/linux_cpu_runbook.md](../operations/linux_cpu_runbook.md), [cabal_layout.md](cabal_layout.md), [cluster_topology.md](cluster_topology.md), [../reference/cli_surface.md](../reference/cli_surface.md), [../../DEVELOPMENT_PLAN/system-components.md](../../DEVELOPMENT_PLAN/system-components.md), [../../DEVELOPMENT_PLAN/phase-6-bootstrap-and-outer-container.md](../../DEVELOPMENT_PLAN/phase-6-bootstrap-and-outer-container.md)
+**Referenced by**: [../README.md](../README.md), [../../README.md](../../README.md), [../../CLAUDE.md](../../CLAUDE.md), [../../AGENTS.md](../../AGENTS.md), [../development/local_dev.md](../development/local_dev.md), [../development/assistant_workflow.md](../development/assistant_workflow.md), [../development/testing_strategy.md](../development/testing_strategy.md), [../operations/cluster_bootstrap_runbook.md](../operations/cluster_bootstrap_runbook.md), [../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md), [../operations/linux_cpu_runbook.md](../operations/linux_cpu_runbook.md), [cabal_layout.md](cabal_layout.md), [cluster_topology.md](cluster_topology.md), [../reference/cli_surface.md](../reference/cli_surface.md), [../../DEVELOPMENT_PLAN/system-components.md](../../DEVELOPMENT_PLAN/system-components.md), [../../DEVELOPMENT_PLAN/phase-7-hostbootstrap-and-project-dockerfile.md](../../DEVELOPMENT_PLAN/phase-7-hostbootstrap-and-project-dockerfile.md)
 
 > **Purpose**: Define how `daemon-substrate` sits on top of [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap) —
 > the model-per-substrate mapping, the canonical `hostbootstrap.dhall` shape this repository
@@ -111,7 +111,7 @@ H.config
 ```
 
 This document is the canonical home for the shape; the file itself lands in
-[`phase-6-bootstrap-and-outer-container.md`](../../DEVELOPMENT_PLAN/phase-6-bootstrap-and-outer-container.md).
+[`phase-7-hostbootstrap-and-project-dockerfile.md`](../../DEVELOPMENT_PLAN/phase-7-hostbootstrap-and-project-dockerfile.md).
 
 ## Base image and toolchain
 
@@ -203,4 +203,4 @@ for the cleanup-ledger entries that record this.
 - First-run developer flow: [../development/local_dev.md](../development/local_dev.md)
 - Cluster topology (in-cluster side): [cluster_topology.md](cluster_topology.md)
 - Cabal layout (GHC 9.12 pin): [cabal_layout.md](cabal_layout.md)
-- Phase that delivers the integration: [../../DEVELOPMENT_PLAN/phase-6-bootstrap-and-outer-container.md](../../DEVELOPMENT_PLAN/phase-6-bootstrap-and-outer-container.md)
+- Phase that delivers the integration: [../../DEVELOPMENT_PLAN/phase-7-hostbootstrap-and-project-dockerfile.md](../../DEVELOPMENT_PLAN/phase-7-hostbootstrap-and-project-dockerfile.md) (was Phase 6 before the re-baseline)

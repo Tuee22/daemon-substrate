@@ -2,26 +2,30 @@
 
 **Status**: Authoritative source
 **Supersedes**: N/A
-**Referenced by**: [../README.md](../README.md), [../architecture/pulsar_minio_ssot.md](../architecture/pulsar_minio_ssot.md), [cluster_topology.md](cluster_topology.md), [mock_engine.md](mock_engine.md)
+**Referenced by**: [../README.md](../README.md), [../architecture/pulsar_minio_ssot.md](../architecture/pulsar_minio_ssot.md), [../architecture/lifecycle_policy.md](../architecture/lifecycle_policy.md), [cluster_topology.md](cluster_topology.md), [mock_engine.md](mock_engine.md)
 
 > **Purpose**: Inventory the MinIO buckets the test harness uses, what each holds, who writes
 > and reads them, and the content shape of the mock blobs.
 
 ## TL;DR
 
-- Two buckets: `daemon-substrate-test-weights` (mock model weights) and
-  `daemon-substrate-test-artifacts` (mock binary I/O artifacts).
+- Three buckets: `daemon-substrate-test-weights` (mock model weights), `daemon-substrate-test-artifacts`
+  (mock binary I/O artifacts), and `daemon-substrate-test-archives` (Pulsar topic archives
+  for `ContinuousWithArchive` / `FiniteSession` / `OnlineLearning` test cases).
 - All blobs are tiny, content-addressable, and seeded deterministically by the test harness
   bootstrap. Total bucket footprint stays under a few MB.
-- Workers read from both buckets via `HasMinIO`. The orchestrator writes the seed objects
-  during cluster bring-up as part of its WAN→MinIO hydration role (here simulated, not real).
+- Workers read from `weights` and `artifacts` via `HasMinIO`. The orchestrator writes the seed
+  objects during cluster bring-up as part of its WAN→MinIO hydration role (here simulated,
+  not real). The reconciler manages buckets + orphan-scan per the
+  [`LifecyclePolicy`](../architecture/lifecycle_policy.md).
 
 ## Bucket inventory
 
 | Bucket | Purpose | Writer | Reader | Approx. size |
 |--------|---------|--------|--------|--------------|
-| `daemon-substrate-test-weights` | mock model "weights" | orchestrator (seed at startup) | worker (per request) | < 1 MB |
+| `daemon-substrate-test-weights` | mock model "weights" (content-addressed `blobs/`, `manifests/`, `pointers/`) | orchestrator (seed at startup); reconciler (orphan-scan target) | worker (per request) | < 1 MB |
 | `daemon-substrate-test-artifacts` | mock binary input / output artifacts | worker (writes outputs); orchestrator (seeds inputs) | both | < 1 MB |
+| `daemon-substrate-test-archives` | Pulsar topic archives (`archives/<topic>/<startTime>-<endTime>.archive`) | reconciler (`ContinuousWithArchive` export) | integration tests (read for assertions) | varies; capped by `archiveRetentionDays` |
 
 Both buckets are pre-created by the kind cluster bring-up flow (see
 [cluster_topology.md](cluster_topology.md) § MinIO).
@@ -72,13 +76,30 @@ The harness exercises:
 
 Pointer objects use ETag-based CAS:
 
-- `mock/v1/manifest.json` (or equivalent) lists the current set of weight keys
-- the orchestrator updates the manifest with `If-Match` against the previous ETag
+- `pointers/<key>` lists the current set of weight keys
+- the orchestrator updates the pointer with `If-Match` against the previous ETag
 - two simultaneous orchestrator writers would see one succeed and one fail with `412
   Precondition Failed` — the harness asserts this guarantee in the integration suite
 
-No in-place mutations of existing keys. Updates always produce a new key; the manifest pointer
-is the only mutable thing.
+No in-place mutations of existing keys. Updates always produce a new key; the pointer is the
+only mutable thing.
+
+## Orphan scan (mark-and-sweep)
+
+`daemon-substrate-test-weights` is the canonical orphan-scan target. The reconciler runs the
+scan on the cadence declared by `BucketLifecycle.orphanScan`. The harness uses a tight
+`safetyWindowMin = 30 seconds` (vs the substrate default of 60 minutes) so tests can exercise
+expiration. Algorithm:
+
+1. Read every object in `pointers/`. Each pointer body names a manifest content-hash.
+2. Read each named manifest from `manifests/`. Collect every blob hash referenced.
+3. List `blobs/` and `manifests/`. Any object not in the reachable set AND whose
+   `LastModified` is older than `now - safetyWindowMin` is hard-deleted.
+4. Every delete publishes to `audit.reconcile.daemon-substrate-test` keyed by the object key.
+
+The integration suite asserts both directions: (a) an object older than the safety window and
+unreachable is deleted; (b) an object younger than the safety window is never deleted, even if
+unreachable. See [../architecture/lifecycle_policy.md](../architecture/lifecycle_policy.md).
 
 ## Sizing
 
