@@ -56,8 +56,9 @@ Reconciles cluster absence. Preserves `./.data/`, `./.build/`, the project conta
 
 Read-only. Reports:
 
-- `lifecyclePhase` (one of `Bootstrap`, `AcquireClients`, `ProbeClients`, `Ready`, `Draining`,
-  `Exit`)
+- `lifecyclePhase` (one of `Load`, `Prereq`, `Acquire`, `Ready`, `Serve`, `Drain`, `Exit`;
+  the seven-phase `Daemon.Lifecycle.LifecyclePhase` — see
+  [../../DEVELOPMENT_PLAN/system-components.md § Lifecycle phases](../../DEVELOPMENT_PLAN/system-components.md))
 - `lifecycleDetail`
 - `lifecycleHeartbeatAt`
 - node readiness

@@ -2,7 +2,7 @@
 
 **Status**: Authoritative source
 **Supersedes**: N/A
-**Referenced by**: [../README.md](../README.md), [../architecture/library_consumption_model.md](../architecture/library_consumption_model.md), [../architecture/lifecycle_policy.md](../architecture/lifecycle_policy.md), [../engineering/pulsar_topics.md](../engineering/pulsar_topics.md), [../engineering/mock_engine.md](../engineering/mock_engine.md)
+**Referenced by**: [../README.md](../README.md), [../architecture/library_consumption_model.md](../architecture/library_consumption_model.md), [../architecture/lifecycle_policy.md](../architecture/lifecycle_policy.md), [../architecture/pulsar_minio_ssot.md](../architecture/pulsar_minio_ssot.md), [../engineering/pulsar_topics.md](../engineering/pulsar_topics.md), [../engineering/orchestration_topologies.md](../engineering/orchestration_topologies.md), [../engineering/batching.md](../engineering/batching.md), [../engineering/mock_engine.md](../engineering/mock_engine.md)
 
 > **Purpose**: Authoritative inventory of every `.proto` file in `proto/`, the messages each
 > defines, and the boundary between substrate-owned envelopes and consumer-owned (or
@@ -12,10 +12,17 @@
 
 - Substrate-owned envelopes live under `proto/daemon_substrate/`.
 - Test-harness payloads live under `proto/daemon_substrate_test/`.
-- Consumers define their own payload protos in their own repositories. The substrate provides
-  the envelopes that wrap them.
-- All Pulsar payloads are protobuf. JSON / Aeson / CBOR are not part of the supported
-  contract.
+- Consumers define their own payload protos (or other encoded bytes) in their own repositories.
+  The substrate provides the envelopes that wrap them.
+- Substrate-owned envelopes are protobuf. Consumer-owned payloads (carried inside
+  `WorkflowEvent.inline_bytes` or referenced via `WorkflowEvent.object_ref`) may use whatever
+  encoding the consumer chooses — substrate treats them as opaque bytes and routes by
+  `payload_type` URL prefix.
+- Payloads larger than `BootConfig.blobInlineThresholdBytes` MUST flow as `object_ref`
+  (substrate enforces the switch at publish time); see
+  [../architecture/pulsar_minio_ssot.md](../architecture/pulsar_minio_ssot.md).
+- Application code uses hand-written `Daemon.Wire.*` ADTs that wrap the generated
+  `Daemon.Proto.*` records; only the publish / subscribe boundary touches the generated types.
 
 ## Layout
 
@@ -45,10 +52,28 @@ package daemon_substrate;
 
 // Carried inside every Pulsar message the substrate publishes or consumes.
 message WorkflowEvent {
-  string event_id    = 1;          // sha256 of payload bytes; for L3 dedup
-  int64  produced_at = 2;          // unix nanoseconds; monotonic per producer
-  bytes  payload     = 3;          // consumer-defined or test-harness payload
-  string payload_type = 4;         // fully-qualified protobuf type URL of `payload`
+  string       event_id      = 1;  // sha256 of payload bytes; for L3 dedup
+  int64        produced_at   = 2;  // unix nanoseconds; monotonic per producer
+  int64        deadline_at   = 3;  // unix nanoseconds; 0 = no deadline; consumed by Batcher
+  WorkflowKind workflow_kind = 4;  // operational classification; see enum below
+  string       payload_type  = 5;  // fully-qualified protobuf type URL of inline_bytes (when set)
+  oneof payload {
+    bytes     inline_bytes   = 6;  // payload at-or-below BootConfig.blobInlineThresholdBytes
+    ObjectRef object_ref     = 7;  // payload above the threshold; substrate enforces the switch
+  }
+}
+
+// Operational classification. Affects substrate-level behavior (drain ordering, scaling
+// policy, observability segmentation, audit aggregation) but does NOT prescribe payload
+// shape — that is the consumer's payload_type URL.
+enum WorkflowKind {
+  WORKFLOW_KIND_UNSPECIFIED = 0;
+  WORKFLOW_KIND_TRAINING    = 1;
+  WORKFLOW_KIND_INFERENCE   = 2;
+  WORKFLOW_KIND_EVALUATION  = 3;
+  WORKFLOW_KIND_INGESTION   = 4;
+  WORKFLOW_KIND_AUDIT       = 5;
+  WORKFLOW_KIND_CUSTOM      = 6;   // pair with payload_type URL for operational tagging
 }
 
 message ObjectRef {
@@ -57,6 +82,15 @@ message ObjectRef {
   string etag   = 3;               // optional; for explicit version pinning
 }
 ```
+
+`deadline_at = 0` means no deadline (best-effort). For requests with a non-zero deadline,
+the substrate batcher honors it: requests near their deadline force-flush their bucket;
+requests past their deadline are dropped before dispatch. See
+[../engineering/batching.md](../engineering/batching.md).
+
+The `payload` oneof keeps Pulsar payloads bounded: bytes above the configured threshold ride
+in MinIO as `ObjectRef`, leaving the Pulsar message message-shaped. Receivers can opt into
+transparent materialization via `Daemon.MinIO.Store.readBlob`.
 
 ### `daemon_substrate/control.proto`
 
@@ -172,8 +206,16 @@ message AuditEvent {
   int64           executed_at      = 3;   // unix nanoseconds, monotonic per leader
   string          leader_replica   = 4;   // pod / process identity (debug aid)
   string          detail           = 5;   // free-form (e.g., archive object key)
+  repeated ObjectRef source_refs   = 6;   // optional; lineage in-edges (graph indexing deferred)
+  repeated ObjectRef result_refs   = 7;   // optional; lineage out-edges (graph indexing deferred)
 }
 ```
+
+The `source_refs` and `result_refs` fields land on the wire now so consumers can populate
+them as they emit audit events. Graph indexing (BFS/DFS traversal, per-consumer predicate
+hooks) is deferred to a later phase. Lineage is per-consumer: `infernix` and `jitML` are
+sealed loops over shared substrate primitives, so substrate does not provide cross-consumer
+lineage queries. Each consumer queries its own lineage subgraph independently.
 
 ## Test-harness payloads
 
@@ -223,6 +265,44 @@ Protobuf code generation produces modules under `src/Daemon/Proto/`:
 The generator is `proto-lens-setup`-driven; the Cabal stanza for the library declares both
 `build-tool-depends: proto-lens-protoc` and the appropriate `autogen-modules`. See
 [../engineering/cabal_layout.md](../engineering/cabal_layout.md).
+
+## Wire-layer wrappers
+
+Generated `Daemon.Proto.*` modules expose `proto-lens` lens-records that are not idiomatic
+Haskell. Substrate exports hand-written `Daemon.Wire.*` ADTs that mirror each envelope, with
+`toProto` / `fromProto` codecs:
+
+- `Daemon.Wire.Workflow`            — `WorkflowEvent`, `WorkflowKind`, `WirePayload`
+- `Daemon.Wire.Control`             — `ControlEnvelope`, `Drain`, `Reload`
+- `Daemon.Wire.OrchestratorWorker`  — `OrchestratorToWorker`, `WorkerResult`, outcome sum
+- `Daemon.Wire.Lifecycle`           — `LifecyclePhase`, `ReadinessReport`
+- `Daemon.Wire.Audit`               — `AuditEvent` with `ObjectRef` lineage lists
+
+`Daemon.Wire.WorkflowEvent` carries `Maybe UTCTime` for `deadline_at` (Nothing when the proto
+field is 0), a Haskell `WorkflowKind` ADT, and a `WirePayload = WireInline ByteString |
+WireObjectRef ObjectRef` sum. Application code uses `Daemon.Wire.*`; only the Pulsar publish /
+subscribe boundary touches `Daemon.Proto.*`. Round-trip property tests
+(`decodeMessage . encodeMessage . toProto . fromProto === id`) are the conformance suite.
+See [Phase 4 Sprint 4.5](../../DEVELOPMENT_PLAN/phase-4-engine-mock-protos-audit.md).
+
+## Consumer payload encoding (non-normative)
+
+`infernix` and `jitML` are both Haskell consumers on shared GHC 9.12; the substrate does not
+impose a wire encoding on consumer payloads. Substrate guarantees envelope discipline and
+routes by `WorkflowEvent.payload_type` URL prefix via `Daemon.Consumer.HandlerRouter`.
+
+Consumers in this project use:
+
+- `infernix` — protobuf catalog under `type.infernix.io/inference/v1/*` for stable multimodal
+  inference contracts (text / image / audio / video, with large modalities flowing as
+  `object_ref`).
+- `jitML` — opaque bytes with `type.jitml.io/*` URLs for experimental SL / RL workload shapes;
+  promote to protobuf as a shape stabilizes.
+
+This is a consumer choice, not a substrate-imposed contract. The substrate treats every
+`inline_bytes` payload as opaque and every `object_ref` payload as a MinIO reference. The
+sealed-loop assumption applies: `infernix` and `jitML` exchange no payloads with each other,
+so cross-consumer schema compatibility is not a substrate concern.
 
 ## Consumer-owned payloads
 

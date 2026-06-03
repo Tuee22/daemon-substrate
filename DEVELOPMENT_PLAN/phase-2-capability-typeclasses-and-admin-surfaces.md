@@ -37,7 +37,16 @@ protobuf envelopes.
 
 Define `Daemon.Pulsar.HasPulsar` (`pulsarPublish`, `pulsarSubscribe`, `pulsarConsume`,
 `pulsarAcknowledge`, `pulsarNegativeAcknowledge`, `pulsarSeek`) and `SubscriptionMode`
-(`Shared`, `KeyShared`, `Exclusive`, `Failover`). Ship two implementations:
+(`Shared`, `KeyShared`, `Exclusive`, `Failover`). All four variants are part of the public
+typeclass surface; `KeyShared` and `Exclusive` are exposed for consumer use (e.g. `infernix`
+context-affine LLM inference; see
+[`../documents/engineering/pulsar_topics.md`](../documents/engineering/pulsar_topics.md))
+but are not exercised by the test-harness integration suite because the mock engine is
+stateless across requests and affinity provides no benefit. Sprint deliverables cover
+`Shared` and `Failover` end-to-end; `KeyShared` and `Exclusive` are covered by unit tests
+against `Daemon.Test.FilesystemPulsar` only.
+
+Ship two implementations:
 
 - `Daemon.Test.FilesystemPulsar` — in-process implementation backed by an in-memory ledger
   (used for unit tests).
@@ -93,8 +102,21 @@ backends.
 #### Objective
 
 Define `Daemon.MinIO.HasMinIO` (`minioGet`, `putBlobIfAbsent`, `casPointer`, `listObjects`,
-`deleteObject`). Define `Daemon.MinIO.Cache` with `readWithCache`. Define
-`Daemon.MinIO.Store` — the generic content-addressed store
+`deleteObject`). Define `Daemon.MinIO.Cache` with `readWithCache` plus an explicit pin API:
+
+```haskell
+pin       :: HasMinIO m => ObjectRef -> m ()
+unpin     :: HasMinIO m => ObjectRef -> m ()
+isPinned  :: HasMinIO m => ObjectRef -> m Bool
+```
+
+The cache enforces a quota plus LRU/TTL eviction but never evicts a pinned ref. The pin set
+is process-local and non-durable. Required by `infernix`'s hot-model cache (currently-served
+models must not be reclaimed mid-request) and useful for `jitML`'s active-experiment
+checkpoints. See [`../documents/architecture/lifecycle_policy.md`](../documents/architecture/lifecycle_policy.md)
+`## Library modules`.
+
+Define `Daemon.MinIO.Store` — the generic content-addressed store
 (`putBlob` / `putManifest` / `casPointer` / `readBlob` / `readManifest`) jitML's checkpoint
 store today implements directly.
 
@@ -107,10 +129,13 @@ Ship two implementations:
 #### Deliverables
 
 - `src/Daemon/MinIO.hs`, `src/Daemon/MinIO/Cache.hs`, `src/Daemon/MinIO/Store.hs` populated
+  (cache module exports `pin` / `unpin` / `isPinned`)
 - both implementations populated
 - unit tests covering: put / get round-trip, `If-None-Match: *` semantics, `If-Match` CAS
-  success and failure, cache cold path, cache warm path, cache eviction, store-level blob /
-  manifest / pointer round-trips
+  success and failure, cache cold path, cache warm path, cache eviction (eviction triggers
+  on non-pinned set under quota pressure), pin survives eviction-pressure cycles, unpin
+  allows eviction to reclaim, `isPinned` round-trip, store-level blob / manifest / pointer
+  round-trips
 
 #### Validation
 

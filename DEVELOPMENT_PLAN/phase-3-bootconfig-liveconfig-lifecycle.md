@@ -38,11 +38,17 @@ Define `Daemon.Config.BootConfig role app`, the `Role = Worker | Orchestrator` t
 Dhall decoder. The `app` type parameter is the consumer-specific plug; the substrate provides
 a `()` default and a `Dhall.FromDhall app` constraint at the use site.
 
+Adds `blobInlineThresholdBytes :: Natural` (default `262144` = 256 KiB) governing the
+substrate's large-blob handoff convention: payloads above the threshold MUST flow as
+`WorkflowEvent.object_ref` rather than `inline_bytes`. See
+[`../documents/architecture/pulsar_minio_ssot.md`](../documents/architecture/pulsar_minio_ssot.md).
+
 #### Deliverables
 
-- `src/Daemon/Config/BootConfig.hs` populated
+- `src/Daemon/Config/BootConfig.hs` populated, including `blobInlineThresholdBytes`
 - `dhall/orchestrator.dhall` and `dhall/worker.dhall` schema stubs for the test harness
-- unit tests covering: decode round-trip, schema mismatch fails closed, role tag enforcement
+- unit tests covering: decode round-trip, schema mismatch fails closed, role tag enforcement,
+  `blobInlineThresholdBytes` default value used when field omitted
 
 ### Sprint 3.2: `LiveConfig` + SIGHUP reload [Planned]
 
@@ -53,15 +59,25 @@ a `()` default and a `Dhall.FromDhall app` constraint at the use site.
 #### Objective
 
 Define `Daemon.Config.LiveConfig` — the SIGHUP-reloadable runtime configuration shape (retry
-policy, dedup cache size + TTL, drain deadline, batch size, batch latency window). Decode from
-Dhall on startup; re-decode from the same path on SIGHUP without restarting the daemon.
+policy, dedup cache size + TTL, drain deadline, `BatchingPolicy`, `SchedulerPolicy`).
+Decode from Dhall on startup; re-decode from the same path on SIGHUP without restarting the
+daemon.
+
+Batch sizing and scheduling weights live in `LiveConfig` because they are tuned at runtime
+against observed workload, not at boot. See
+[`../documents/engineering/batching.md`](../documents/engineering/batching.md) for the full
+`BatchingPolicy` + `SchedulerPolicy` shape (flush strategies, backpressure modes, multi-bucket
+scheduler layers).
 
 #### Deliverables
 
-- `src/Daemon/Config/LiveConfig.hs` populated
+- `src/Daemon/Config/LiveConfig.hs` populated, including `BatchingPolicy` and
+  `SchedulerPolicy` record types and Dhall decoders for every `FlushStrategy` /
+  `BackpressureMode` variant
 - `dhall/live.dhall` schema stub
 - unit tests covering: initial decode, reload-after-edit observation, decode-failure-on-reload
-  preserves the previous LiveConfig
+  preserves the previous LiveConfig, round-trip per `FlushStrategy` and `BackpressureMode`
+  variant, missing `bucketWeights` entries default to weight 1
 
 ### Sprint 3.3: `LifecyclePolicy` Dhall decoders [Planned]
 
@@ -114,6 +130,18 @@ handler that triggers `LiveConfig` reload. Expose `/healthz`, `/readyz`, `/metri
 endpoints reading from `DaemonRuntime`. The HTTP listener is intentionally minimal — no
 routing framework, no auth, no JSON-RPC. Just the three k8s liveness probes.
 
+A drain "completes" when all four conditions hold:
+
+1. All subscribed consumers have stopped polling (no new messages received).
+2. All in-flight handler invocations have returned (success or error).
+3. All `Failover` subscriptions have been surrendered to standbys.
+4. `Daemon.WorkflowState` has flushed pending Pulsar publishes.
+
+If `LiveConfig.drainDeadlineSeconds` elapses with any of (1)–(4) still incomplete, the
+process logs a structured `"drain timeout"` line naming which conditions remained unmet and
+exits non-zero. The exit code is reserved for the lifecycle observability surface in Phase 8
+Sprint 8.3.
+
 #### Deliverables
 
 - `src/Daemon/Signal.hs` populated (`applyDaemonSignal :: DaemonControl -> DaemonSignal -> IO DaemonControlSnapshot`)
@@ -143,14 +171,19 @@ supplied callback.
 
 **Engineering docs to create/update:**
 - `documents/architecture/library_consumption_model.md` updates `BootConfig role app` and
-  `LiveConfig` from "planned shape" to current-state.
+  `LiveConfig` from "planned shape" to current-state, including `blobInlineThresholdBytes`
+  and the `BatchingPolicy` / `SchedulerPolicy` additions.
 - `documents/architecture/daemon_roles.md` updates the signal / lifecycle paragraphs from
   forward-looking to current-state.
 - `documents/architecture/lifecycle_policy.md` updates the "Library modules" entry for
-  `Daemon.Config.LifecyclePolicy` from forward-looking to current-state.
+  `Daemon.Config.LifecyclePolicy` from forward-looking to current-state and the new
+  "Batching and scheduling" section reads as the implemented surface.
+- `documents/engineering/batching.md` (new) — the `BatchingPolicy` + `SchedulerPolicy` Dhall
+  surface specification lands as current-state when the Sprint 3.2 decoders ship.
 
 **Reference docs to create/update:**
-- none unique to this phase (`LifecyclePhase` / `ReadinessReport` proto lands in Phase 4).
+- none unique to this phase (`LifecyclePhase` / `ReadinessReport` / `WorkflowEvent` schema
+  lands in Phase 4).
 
 **Cross-references to add:**
 - `system-components.md` flips the lifecycle / config module rows to `Implemented: yes`.

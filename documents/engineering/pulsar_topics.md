@@ -2,7 +2,7 @@
 
 **Status**: Authoritative source
 **Supersedes**: N/A
-**Referenced by**: [../README.md](../README.md), [../architecture/pulsar_minio_ssot.md](../architecture/pulsar_minio_ssot.md), [../architecture/lifecycle_policy.md](../architecture/lifecycle_policy.md), [cluster_topology.md](cluster_topology.md), [mock_engine.md](mock_engine.md), [../reference/proto_surface.md](../reference/proto_surface.md)
+**Referenced by**: [../README.md](../README.md), [../architecture/pulsar_minio_ssot.md](../architecture/pulsar_minio_ssot.md), [../architecture/lifecycle_policy.md](../architecture/lifecycle_policy.md), [cluster_topology.md](cluster_topology.md), [mock_engine.md](mock_engine.md), [orchestration_topologies.md](orchestration_topologies.md), [batching.md](batching.md), [../reference/proto_surface.md](../reference/proto_surface.md)
 
 > **Purpose**: Inventory every Pulsar topic the test harness uses, the subscription mode each
 > subscriber attaches with, and the protobuf payload each topic carries.
@@ -29,17 +29,27 @@
 
 ## Topic inventory
 
-| Topic | Producer | Subscriber | Subscription mode | Payload |
-|-------|----------|------------|-------------------|---------|
-| `test.request` | test driver (representing an upstream user; public ingress) | orchestrator (N replicas) | `Shared` | `WorkflowEvent { MockRequest }` |
-| `test.batch.<cohort>` | orchestrator | worker | `Shared` (multiple workers fan out by message) | `OrchestratorToWorker { MockBatch }` |
-| `test.result` | worker | orchestrator (N replicas) | `Shared` | `WorkerResult { MockResult }` |
-| `test.control.orchestrator` | test driver | orchestrator | `Failover` | `ControlEnvelope { Drain | Reload }` |
-| `test.control.worker` | orchestrator | worker | `Failover` | `ControlEnvelope { Drain | Reload }` |
-| `control.reconcile.leader.daemon-substrate-test` | (any orchestrator replica) | orchestrator (×N; only one active) | `Failover` | leader-election placeholder payload |
-| `audit.reconcile.daemon-substrate-test` | reconciler leader | (consumers / debug; integration tests assert state) | compacted topic, key = `<kind>:<id>` | `AuditEvent` |
-| `test.session.control` | test driver | reconciler leader | `Failover` | session start/end events for `FiniteSession`-mode topics |
-| `test.session.workload.<session-id>` | session producer / consumer | session consumer | `Shared` | created on `session-start`, terminated on `session-end` |
+| Topic | Producer | Subscriber | Subscription mode | Partitions | Payload |
+|-------|----------|------------|-------------------|------------|---------|
+| `test.request` | test driver (representing an upstream user; public ingress) | orchestrator (N replicas) | `Shared` | 1 | `WorkflowEvent { MockRequest }` |
+| `test.batch.<cohort>` | orchestrator | worker | `Shared` (multiple workers fan out by message) | 1 | `OrchestratorToWorker { MockBatch }` |
+| `test.result` | worker | orchestrator (N replicas) | `Shared` | 1 | `WorkerResult { MockResult }` |
+| `test.control.orchestrator` | test driver | orchestrator | `Failover` | 1 | `ControlEnvelope { Drain | Reload }` |
+| `test.control.worker` | orchestrator | worker | `Failover` | 1 | `ControlEnvelope { Drain | Reload }` |
+| `control.reconcile.leader.daemon-substrate-test` | (any orchestrator replica) | orchestrator (×N; only one active) | `Failover` | 1 | leader-election placeholder payload |
+| `audit.reconcile.daemon-substrate-test` | reconciler leader | (consumers / debug; integration tests assert state) | compacted topic, key = `<kind>:<id>` | 1 | `AuditEvent` |
+| `test.session.control` | test driver | reconciler leader | `Failover` | 1 | session start/end events for `FiniteSession`-mode topics |
+| `test.session.workload.<session-id>` | session producer / consumer | session consumer | `Shared` | 1 | created on `session-start`, terminated on `session-end` |
+
+### Partition counts
+
+Every test-harness topic is partitioned at **1 partition**. The harness exercises horizontal
+scale via multiple consumer replicas attaching to the same `Shared` subscription on a
+single-partition topic, which is sufficient to validate the substrate's transport plumbing.
+Higher partition counts add no coverage for the harness's purposes.
+
+Consumer projects (`infernix`, `jitML`) choose partition counts for their own topics in their
+own `LifecyclePolicy` — partitioning is a consumer-deployment concern, not a substrate one.
 
 See [../architecture/lifecycle_policy.md](../architecture/lifecycle_policy.md) for the full
 reconciler / audit / leader-election design.
@@ -81,10 +91,20 @@ worker replicas within a cohort.
 
 ## Payload encoding
 
-All payloads are protobuf, encoded with `proto-lens`'s `encodeMessage` / `decodeMessage`. The
-substrate-owned envelopes live in `proto/daemon_substrate/workflow.proto` and friends; the
-test-harness `MockPayload` types live in `proto/daemon_substrate_test/mock.proto`. See
+Substrate-owned envelopes are protobuf, encoded with `proto-lens`'s `encodeMessage` /
+`decodeMessage`. The envelopes live in `proto/daemon_substrate/workflow.proto` and friends;
+the test-harness `MockPayload` types live in `proto/daemon_substrate_test/mock.proto`. See
 [../reference/proto_surface.md](../reference/proto_surface.md).
+
+Substrate publishes and consumes envelopes via the `Daemon.Wire.*` ADT layer; only the wire
+boundary touches generated `Daemon.Proto.*` types. Application code (test harness and
+consumer base loops alike) sees idiomatic Haskell ADTs with `Maybe UTCTime` deadlines,
+`WorkflowKind` sums, and a `WirePayload = WireInline ByteString | WireObjectRef ObjectRef`
+sum — never the generated lens-records.
+
+Consumer payloads carried inside `WorkflowEvent.inline_bytes` (or referenced via
+`WorkflowEvent.object_ref`) are opaque to substrate; the harness's `MockPayload` is one
+example, but consumers in production (`infernix`, `jitML`) choose their own encoding.
 
 ## Acknowledgement and retry
 
@@ -101,4 +121,6 @@ Standard Pulsar semantics. The harness exercises:
 
 - The SSoT story: [../architecture/pulsar_minio_ssot.md](../architecture/pulsar_minio_ssot.md)
 - What the orchestrator and worker do with these messages: [../architecture/daemon_roles.md](../architecture/daemon_roles.md)
-- Generated protobuf modules: [../reference/proto_surface.md](../reference/proto_surface.md)
+- Generated protobuf modules and `Daemon.Wire.*` wrappers: [../reference/proto_surface.md](../reference/proto_surface.md)
+- Typed Pulsar topology builders consumers use to assemble workflows: [orchestration_topologies.md](orchestration_topologies.md)
+- Substrate-owned batcher + multi-bucket scheduler for accelerated worker pools: [batching.md](batching.md)

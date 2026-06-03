@@ -70,6 +70,25 @@ hostbootstrap run daemon-substrate-test cluster up # invoke inner directly if ne
 Each phase emits a heartbeat. `cluster status` displays the current phase, the heartbeat
 timestamp, and any per-phase detail.
 
+## "Ready" definition
+
+The cluster is `Ready` when **all six** conditions hold:
+
+1. Kind node count matches the count declared in the staged Dhall (control plane + three
+   worker nodes today).
+2. The Pulsar admin API is reachable on the chosen edge port.
+3. Every MinIO bucket named in `LifecyclePolicy` exists.
+4. The orchestrator Deployment is `2/2` Ready (both replicas healthy).
+5. The worker is `2/2` Ready on Linux CPU, or the host LaunchDaemon reports `Ready` on
+   Apple Silicon.
+6. `runReconciler` has completed at least one full tick (audit-topic entry observed for the
+   current `LifecyclePolicy` generation).
+
+If any condition is not met, `cluster status` reports the failing condition under
+`lifecycleDetail`. This is the same definition used by `daemon-substrate-test test integration`
+preflight (see [../reference/cli_surface.md § test integration](../reference/cli_surface.md)
+and [../development/testing_strategy.md](../development/testing_strategy.md)).
+
 ## Status
 
 ```bash
@@ -79,8 +98,10 @@ hostbootstrap run daemon-substrate-test cluster status   # Linux
 
 Reports:
 
-- current `lifecyclePhase` (one of `Bootstrap`, `AcquireClients`, `ProbeClients`, `Ready`,
-  `Draining`, `Exit`)
+- current `lifecyclePhase` (one of `Load`, `Prereq`, `Acquire`, `Ready`, `Serve`, `Drain`,
+  `Exit`; the seven-phase `Daemon.Lifecycle.LifecyclePhase` defined in
+  [../../DEVELOPMENT_PLAN/phase-3-bootconfig-liveconfig-lifecycle.md](../../DEVELOPMENT_PLAN/phase-3-bootconfig-liveconfig-lifecycle.md)
+  Sprint 3.4 and serialized to the wire by `proto/daemon_substrate/lifecycle.proto`)
 - `lifecycleDetail`: free-form descriptor of what the current phase is doing
 - `lifecycleHeartbeatAt`: monotonic timestamp of the most recent heartbeat update
 - cluster node readiness summary

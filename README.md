@@ -89,13 +89,17 @@ with-compiler: ghc-9.12
 
 The library exposes a small surface that consumers wire into their own daemon entry points:
 
-- `HasPulsar`, `HasMinIO`, `HasEngine` typeclasses for the substrate seams
+- `HasPulsar`, `HasMinIO`, `HasEngine` typeclasses for the substrate seams (`HasEngine` is batch-native: `NonEmpty req -> m (NonEmpty (Either EngineError EngineResponse))`)
 - `runWorker` and `runOrchestrator` as the two role-specific base loops
-- `BootConfig role app` as the typed Dhall-decoded configuration shape consumers parameterize with their own application data
-- protobuf envelopes under `proto/` for the workflow events that ride Pulsar
+- `BootConfig role app` as the typed Dhall-decoded configuration shape consumers parameterize with their own application data; `LiveConfig` carries the SIGHUP-reloadable `BatchingPolicy` + `SchedulerPolicy`
+- Three layered Pulsar abstractions consumers compose instead of writing raw Pulsar client code:
+  - **Envelope layer** — substrate-owned protobuf envelopes (`WorkflowEvent` with `deadline_at`, `WorkflowKind`, and a `payload` oneof; `ControlEnvelope`; `AuditEvent`; etc.), wrapped by hand-written `Daemon.Wire.*` ADTs for idiomatic application code. Consumer payloads carried inside are opaque to the substrate; dispatch is by `payload_type` URL prefix. See [`documents/reference/proto_surface.md`](documents/reference/proto_surface.md).
+  - **Topology layer** — typed builders for `RequestResponse` / `FanOut` / `BatchedFanOut` / `FanIn` / `BatchedFanIn` / `Pipeline` / `Stream`. See [`documents/engineering/orchestration_topologies.md`](documents/engineering/orchestration_topologies.md).
+  - **Batching layer** — the in-cluster orchestrator's substrate-owned batcher and multi-bucket scheduler (hard-deadline preemption + weighted fair queueing + optional bucket-affinity dwell), with a small `BatchingHooks` consumer extension for payload-aware combinability and bucketing. See [`documents/engineering/batching.md`](documents/engineering/batching.md).
+- `Daemon.MinIO.Store` for content-addressed blobs and `Daemon.MinIO.Cache` (with a `pin` / `unpin` / `isPinned` API) for hot-set protection
 - shared lifecycle, signal-handling, and readiness scaffolding
 
-`infernix` and `jitML` provide their own engines, their own substrates (Apple Metal, CUDA, etc.), and their own model weights; `daemon-substrate` provides everything that sits between Pulsar/MinIO and the engine boundary.
+`infernix` and `jitML` provide their own engines, their own substrates (Apple Metal, CUDA, etc.), and their own model weights; `daemon-substrate` provides everything that sits between Pulsar/MinIO and the engine boundary. The two consumers are sealed loops over shared substrate primitives — they share infrastructure but not domain artifacts; the substrate does not mediate consumer-to-consumer protocol.
 
 ## Test harness
 

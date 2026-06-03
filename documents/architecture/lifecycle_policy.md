@@ -2,7 +2,7 @@
 
 **Status**: Authoritative source
 **Supersedes**: N/A
-**Referenced by**: [../README.md](../README.md), [../../README.md](../../README.md), [daemon_roles.md](daemon_roles.md), [pulsar_minio_ssot.md](pulsar_minio_ssot.md), [library_consumption_model.md](library_consumption_model.md), [../engineering/pulsar_topics.md](../engineering/pulsar_topics.md), [../engineering/minio_buckets.md](../engineering/minio_buckets.md), [../engineering/cluster_topology.md](../engineering/cluster_topology.md), [../engineering/hostbootstrap_integration.md](../engineering/hostbootstrap_integration.md), [../reference/proto_surface.md](../reference/proto_surface.md), [../development/testing_strategy.md](../development/testing_strategy.md), [../../DEVELOPMENT_PLAN/development_plan_standards.md](../../DEVELOPMENT_PLAN/development_plan_standards.md), [../../DEVELOPMENT_PLAN/system-components.md](../../DEVELOPMENT_PLAN/system-components.md)
+**Referenced by**: [../README.md](../README.md), [../../README.md](../../README.md), [daemon_roles.md](daemon_roles.md), [pulsar_minio_ssot.md](pulsar_minio_ssot.md), [library_consumption_model.md](library_consumption_model.md), [../engineering/pulsar_topics.md](../engineering/pulsar_topics.md), [../engineering/minio_buckets.md](../engineering/minio_buckets.md), [../engineering/orchestration_topologies.md](../engineering/orchestration_topologies.md), [../engineering/batching.md](../engineering/batching.md), [../engineering/cluster_topology.md](../engineering/cluster_topology.md), [../engineering/hostbootstrap_integration.md](../engineering/hostbootstrap_integration.md), [../reference/proto_surface.md](../reference/proto_surface.md), [../development/testing_strategy.md](../development/testing_strategy.md), [../../DEVELOPMENT_PLAN/development_plan_standards.md](../../DEVELOPMENT_PLAN/development_plan_standards.md), [../../DEVELOPMENT_PLAN/system-components.md](../../DEVELOPMENT_PLAN/system-components.md)
 
 > **Purpose**: Canonical home for the Pulsar topic and MinIO bucket / object lifecycle that
 > `daemon-substrate` owns — the declarative Dhall `LifecyclePolicy` shape consumers ship, the
@@ -259,6 +259,23 @@ Default values for `auditTopic` and `leaderControlTopic`:
 - `auditTopic`: `audit.reconcile.<consumer>` (consumer = the `BootConfig.app` name field)
 - `leaderControlTopic`: `control.reconcile.leader.<consumer>`
 
+## Batching and scheduling (orchestrator)
+
+The orchestrator daemon owns request batching as a substrate primitive — see
+[../engineering/batching.md](../engineering/batching.md) for the full specification of the
+`Batcher`, the multi-bucket `Scheduler` (hard-deadline preemption + weighted fair queueing +
+optional bucket-affinity dwell), flush strategies, backpressure modes, deadline semantics,
+and telemetry surface.
+
+`BatchingPolicy` and `SchedulerPolicy` are part of `LiveConfig` (SIGHUP-reloadable), not
+`LifecyclePolicy`. Batch sizing and scheduling weights are tuned at runtime against observed
+workload; topic and bucket lifecycles are structural and change on different cadences. The
+two surfaces are intentionally separate.
+
+The `WorkflowEvent.deadline_at` field (see [../reference/proto_surface.md](../reference/proto_surface.md))
+is the substrate-level deadline carrier; the batcher honors it for force-flush decisions and
+drops expired requests with typed telemetry.
+
 ## Library modules
 
 - `Daemon.Pulsar.Admin` — typed admin operations: `createTopic`, `deleteTopic`,
@@ -266,6 +283,19 @@ Default values for `auditTopic` and `leaderControlTopic`:
   `exportTopicToObject`, `importTopicFromObject`.
 - `Daemon.MinIO.Admin` — typed bucket operations: `createBucket`, `setBucketLifecycle`,
   `listBuckets`, `listObjectsByPrefix`, `deleteObject`.
+- `Daemon.MinIO.Cache` — ephemeral local cache for blobs fetched from MinIO, plus an explicit
+  pin API:
+
+  ```haskell
+  pin       :: HasMinIO m => ObjectRef -> m ()
+  unpin     :: HasMinIO m => ObjectRef -> m ()
+  isPinned  :: HasMinIO m => ObjectRef -> m Bool
+  ```
+
+  The cache enforces a quota plus LRU/TTL eviction; eviction never touches pinned refs.
+  Consumers pin hot artifacts (`infernix` currently-served models; `jitML` active-experiment
+  checkpoints) so eviction cannot reclaim them mid-request. Pinning is process-local and
+  non-durable; on daemon restart the pin set is empty until the consumer re-asserts.
 - `Daemon.Config.LifecyclePolicy` — Dhall decoders for the policy types above.
 - `Daemon.Audit` — compacted-topic helper: keyed write + replay-on-startup.
 - `Daemon.Reconciler` — the leader-elected reconciliation loop:
@@ -299,6 +329,8 @@ guarantees the reconciler will not collect the intermediate blob.
 - Library consumption model: [library_consumption_model.md](library_consumption_model.md)
 - Pulsar topic inventory (test harness): [../engineering/pulsar_topics.md](../engineering/pulsar_topics.md)
 - MinIO bucket inventory (test harness): [../engineering/minio_buckets.md](../engineering/minio_buckets.md)
-- Protobuf inventory (audit envelope): [../reference/proto_surface.md](../reference/proto_surface.md)
+- Orchestration topology primitives: [../engineering/orchestration_topologies.md](../engineering/orchestration_topologies.md)
+- Batching and scheduling: [../engineering/batching.md](../engineering/batching.md)
+- Protobuf inventory (audit envelope, lineage refs): [../reference/proto_surface.md](../reference/proto_surface.md)
 - Testing strategy (workflow coverage): [../development/testing_strategy.md](../development/testing_strategy.md)
 - Plan-level role contract: [`../../DEVELOPMENT_PLAN/development_plan_standards.md` § K](../../DEVELOPMENT_PLAN/development_plan_standards.md)

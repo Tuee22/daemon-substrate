@@ -38,8 +38,11 @@ The engine:
    path, fetches from MinIO; on warm path, hits the local cache via `Daemon.MinIO.Cache`.
 2. If `force_failure` is `true`, returns `EngineNativeError "mock forced failure"` so the
    worker's negative-ack path can be exercised.
-3. Computes a placeholder result: SHA-256 of `(request_id || weight bytes)`, truncated to 32
+3. Computes a placeholder result: SHA-256 of `(request_id || weight_bytes)`, truncated to 32
    bytes. This is deterministic, exercises the byte path, and produces nothing meaningful.
+   `cache_hint` affects cache-lookup behavior in step 1 only; it is **not** included in the
+   SHA-256 input. The hash domain is exactly `request_id || weight_bytes`, in that order,
+   with no separator.
 4. If `write_output` is `true`, writes a 128-byte JSON-shaped placeholder to
    `mock/output/<request_id>` in `daemon-substrate-test-artifacts`. Includes the placeholder
    result hash and the source weight key for traceability.

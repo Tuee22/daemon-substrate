@@ -102,7 +102,8 @@ test output; SIGTERM drain completes within `LiveConfig.drainDeadlineSeconds`.
 #### Objective
 
 Land the integration suite covering every row in the testing-strategy table from "Worker
-consumes a `MockBatch`" through "Audit topic replay" — all 30 cluster-requiring rows.
+consumes a `MockBatch`" through the consumer-representativeness rows — all 34
+cluster-requiring rows (rows 3–36).
 
 #### Deliverables
 
@@ -130,6 +131,15 @@ cohorts. Test output names which cohort it exercised. The integration suite cove
   session-end → terminate-and-export and session-resume → topic re-open),
   `OnlineLearning`
 - MinIO orphan scan: safety window honored, unreachable + past-window objects hard-deleted
+- `Daemon.WorkflowState` rehydration on `AcquireClients` reconstructs the in-memory fold to
+  byte-identical state from Pulsar replay (row 33; representative of jitML training-state and
+  AlphaZero MCTS-tree rehydration, and infernix durable conversation context)
+- producer-side dedup: identical idempotency key → exactly one consumer delivery (row 34;
+  representative of `infernix.InferenceRequest.client_idempotency_key`)
+- engine forced failure: `MockRequest.force_failure = true` → `FailurePayload` propagates to
+  caller without retry (row 35; representative of `InferenceResult.status = Failed`)
+- Apple-Silicon host-daemon ↔ in-cluster Pulsar handshake survives `cluster down` / `up`
+  (row 36; representative of jitML `ForwardToHost` and infernix Apple host daemon)
 
 ### Sprint 8.5: `daemon-substrate-haskell-style` stanza (lint + doc validator) [Planned]
 

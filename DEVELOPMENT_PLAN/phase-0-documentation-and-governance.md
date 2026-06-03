@@ -191,6 +191,10 @@ is still `Deferred`. When Sprint 8.5 lands the validator, the
 current-state declarative as a side effect, and this sprint's status becomes `Done` via
 reference to that closure.
 
+**Closure coupling**: the change set that flips Sprint 8.5 to `Done` must in the same change
+set flip this sprint (0.5) to `Done` and update Phase 0's overall status accordingly. Do not
+merge the Phase 8 Sprint 8.5 change set without including the Phase 0 status updates.
+
 ### Sprint 0.6: hostbootstrap re-baseline [Active]
 
 **Status**: Active

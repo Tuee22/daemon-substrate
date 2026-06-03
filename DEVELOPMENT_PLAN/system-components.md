@@ -12,6 +12,39 @@
 > A given item is `Implemented` only when the relevant phase document marks it `Done`. See
 > [README.md](README.md) for current per-phase status.
 
+## Workflow terminology
+
+Three closely related "workflow" names appear across the plan and documents. They are
+distinct concepts; do not interchange them:
+
+- **`WorkflowEvent`** — the protobuf envelope in `proto/daemon_substrate/workflow.proto`. The
+  on-the-wire shape every consumer-defined event is wrapped in before publication to Pulsar.
+  Carries `event_id`, `produced_at`, `deadline_at`, `workflow_kind` (`WorkflowKind` enum:
+  `Training | Inference | Evaluation | Ingestion | Audit | Custom`), `payload_type` URL, and
+  a `payload` oneof of `inline_bytes` vs `object_ref`. See
+  [`../documents/reference/proto_surface.md`](../documents/reference/proto_surface.md).
+- **`Daemon.WorkflowState`** — the Haskell module landing in Phase 5 Sprint 5.1. An
+  append-to-Pulsar then in-memory fold abstraction that consumers use to track per-key state
+  derived from a `WorkflowEvent` stream; rehydrates on `AcquireClients`.
+- **`WorkflowOwner`** — the conceptual role of "the daemon process that owns the fold for a
+  given workflow key". Not its own typeclass; the term names a responsibility within
+  `runWorker` / `runOrchestrator` consumer step semantics.
+
+## Topology and batching primitives
+
+Substrate ships typed Pulsar topology builders (`Daemon.Topology.*`) so consumers compose
+their orchestrator workflow graph from `RequestResponse`, `FanOut`, `BatchedFanOut`, `FanIn`,
+`BatchedFanIn`, `Pipeline`, `Stream` rather than writing raw Pulsar client code. The batched
+variants integrate the substrate-owned batching subsystem (`Daemon.Batching.*`) — the
+in-cluster orchestrator's core responsibility for keeping accelerated workers saturated.
+See [`../documents/engineering/orchestration_topologies.md`](../documents/engineering/orchestration_topologies.md)
+and [`../documents/engineering/batching.md`](../documents/engineering/batching.md).
+
+The `HasEngine` typeclass is **batch-native**: workers accept
+`NonEmpty req -> m (NonEmpty (Either EngineError EngineResponse))`. Per-request dispatch is
+the singleton-batch case; multi-element batches flow when the worker is fed by an upstream
+`BatchedFanOut`.
+
 ## Public Haskell module surface
 
 | Module | Phase | Implemented |
@@ -40,6 +73,9 @@
 | `Daemon.Reconciler` | 5 | no |
 | `Daemon.WorkflowState` | 5 | no |
 | `Daemon.Proto.*` | 4 (generated) | no |
+| `Daemon.Wire.*` | 4 (Sprint 4.5) | no |
+| `Daemon.Topology.*` | 5 (Sprint 5.1 non-batched; Sprint 5.1.5 batched) | no |
+| `Daemon.Batching.*` | 5 (Sprint 5.1.5) | no |
 
 Test-harness-internal modules (`Daemon.Cluster.*`, `Daemon.Test.Filesystem*`,
 `Daemon.Test.MockEngine`, etc.) land in Phases 2 and 6; they are exposed by the library for
@@ -47,13 +83,13 @@ the `daemon-substrate-test` executable but are not part of the consumer-facing s
 
 ## Typeclasses
 
-| Typeclass | Module | Phase |
-|-----------|--------|-------|
-| `HasPulsar` | `Daemon.Pulsar` | 2 |
-| `HasMinIO` | `Daemon.MinIO` | 2 |
-| `HasHarbor` | `Daemon.Harbor` | 2 |
-| `HasKubectl` | `Daemon.Kubectl` | 2 |
-| `HasEngine` | `Daemon.Engine` | 4 |
+| Typeclass | Module | Phase | Notes |
+|-----------|--------|-------|-------|
+| `HasPulsar` | `Daemon.Pulsar` | 2 | |
+| `HasMinIO` | `Daemon.MinIO` | 2 | `Daemon.MinIO.Cache` adds `pin` / `unpin` / `isPinned` in Sprint 2.3 |
+| `HasHarbor` | `Daemon.Harbor` | 2 | |
+| `HasKubectl` | `Daemon.Kubectl` | 2 | |
+| `HasEngine` | `Daemon.Engine` | 4 | batch-native: `NonEmpty req -> m (NonEmpty (Either EngineError EngineResponse))` |
 
 ## Engine handle variants
 
@@ -88,15 +124,20 @@ Additional base loops exported for consumer use (not their own role):
 | `Drain`    | 6 | SIGTERM received; finish in-flight; stop polling; surrender Failover subs |
 | `Exit`     | 7 | terminal |
 
+The Haskell `Daemon.Lifecycle.LifecyclePhase` (Phase 3 Sprint 3.4) and the protobuf
+`LifecyclePhase` enum in `proto/daemon_substrate/lifecycle.proto` (Phase 4 Sprint 4.1) are
+the same enum: the protobuf is the wire serialization of the Haskell type and must have
+identical variant order to the table above.
+
 ## Protobuf schemas
 
 | File | Messages | Owner |
 |------|----------|-------|
-| `proto/daemon_substrate/workflow.proto` | `WorkflowEvent`, `ObjectRef` | substrate |
+| `proto/daemon_substrate/workflow.proto` | `WorkflowEvent` (with `deadline_at`, `WorkflowKind` enum, `payload` oneof of `inline_bytes` vs `object_ref`), `WorkflowKind`, `ObjectRef` | substrate |
 | `proto/daemon_substrate/control.proto` | `ControlEnvelope`, `Drain`, `Reload` | substrate |
 | `proto/daemon_substrate/orchestrator_worker.proto` | `OrchestratorToWorker`, `WorkerResult`, `SuccessPayload`, `FailurePayload` | substrate |
 | `proto/daemon_substrate/lifecycle.proto` | `LifecyclePhase` enum, `ReadinessReport` | substrate |
-| `proto/daemon_substrate/audit.proto` | `AuditEvent`, `ResourceRef`, `ReconcileAction` | substrate |
+| `proto/daemon_substrate/audit.proto` | `AuditEvent` (with `source_refs` / `result_refs` lineage; graph indexing deferred), `ResourceRef`, `ReconcileAction` | substrate |
 | `proto/daemon_substrate_test/mock.proto` | `MockRequest`, `MockBatch`, `MockResult` | test harness |
 
 ## Pulsar topics (test harness)

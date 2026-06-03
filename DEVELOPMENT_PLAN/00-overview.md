@@ -68,29 +68,41 @@ Depends on Phase 2 because the lifecycle wires through the capability typeclasse
 
 ### Phase 4 — engine typeclass + mock engine + protobuf envelopes + audit topic
 
-Land `HasEngine` with `SubprocessEngine` / `NativeEngine` variants. Land the mock engine
-(`Daemon.Test.MockEngine`) — deterministic SHA-256 placeholder, no real ML. Land the
-substrate-owned protobuf envelopes (`Control`, `Lifecycle`, `OrchestratorWorker`, `Audit`)
-and the generated `Daemon.Proto.*` modules. Land `Daemon.Audit` — the compacted-topic helper
-(keyed write + replay on startup) the reconciler depends on.
+Land `HasEngine` (batch-native: `NonEmpty req -> m (NonEmpty (Either EngineError EngineResponse))`)
+with `SubprocessEngine` / `NativeEngine` variants. Land the mock engine
+(`Daemon.Test.MockEngine`) — deterministic SHA-256 placeholder, no real ML, batch-shaped.
+Land the substrate-owned protobuf envelopes (`Workflow` with `deadline_at`, `WorkflowKind`,
+and the `payload` oneof; `Control`; `Lifecycle`; `OrchestratorWorker`; `Audit` with lineage
+references whose graph indexing is deferred) and the generated `Daemon.Proto.*` modules.
+Land `Daemon.Audit` — the compacted-topic helper (keyed write + replay on startup) the
+reconciler depends on. Land the `Daemon.Wire.*` hand-written ADT layer (Sprint 4.5) that
+wraps the generated `Daemon.Proto.*` records so application code stays idiomatic Haskell;
+round-trip property tests are the conformance suite.
 
 Depends on Phase 3 because the engine seam reads `BootConfig` and the audit helper reads the
 lifecycle phase.
 
 ### Phase 5 — base loops: worker, orchestrator, bridge, fan-in bootstrap, reconciler
 
-Land the five base loops, `Daemon.Consumer` (consumer-batch primitive with dedup), and
-`Daemon.WorkflowState` (append-only workflow event ownership over Pulsar):
+Land the five base loops, `Daemon.Consumer` (consumer-batch primitive with dedup + typed
+`HandlerRouter` keyed by `payload_type` URL prefix + transparent `ObjectRef` materialization),
+and `Daemon.WorkflowState` (append-only workflow event ownership over Pulsar). Ships
+`Daemon.Topology.*` (typed Pulsar topology builders: `RequestResponse`, `FanOut`,
+`BatchedFanOut`, `FanIn`, `BatchedFanIn`, `Pipeline`, `Stream`) and `Daemon.Batching.*`
+(substrate-owned batcher + multi-bucket scheduler with hard-deadline preemption, WFQ, and
+optional bucket-affinity dwell) so consumers compose accelerated-worker topologies without
+writing raw Pulsar code:
 
-- `runWorker` — Pulsar consumer with dedup → `HasEngine` → result publish
-- `runOrchestrator` — fan-in / batch / fan-out / WAN hydration
+- `runWorker` — Pulsar consumer with dedup → batch-native `HasEngine` → result publish
+- `runOrchestrator` — provision a consumer-supplied `Topology` graph, fan-in / batch /
+  fan-out via `Daemon.Topology.*` + `Daemon.Batching.*`, WAN hydration
 - `runBridge` — consume one topic, transform, publish another
 - `runFanInBootstrap` — request → do work → write to MinIO → publish ready event
 - `runReconciler` — leader-elected (Pulsar Failover sub) Pulsar + MinIO lifecycle reconciler,
   running concurrently with `runOrchestrator` in the same orchestrator process
 
-Depends on Phase 4 because the loops dispatch through `HasEngine` and publish to the audit
-topic.
+Depends on Phase 4 because the loops dispatch through batch-native `HasEngine` and publish to
+the audit topic, and depend on the `Daemon.Wire.*` wrapper layer from Sprint 4.5.
 
 ### Phase 6 — kind cluster and Helm chart
 

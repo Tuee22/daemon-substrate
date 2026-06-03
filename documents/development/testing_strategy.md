@@ -55,7 +55,7 @@ The integration suite must cover every row below. Rows 1–2 are also touched by
 | 13 | Orchestrator fan-in: orchestrator batches and fans out to per-cohort worker topic | `runOrchestrator` batch policy | yes | yes |
 | 14 | Orchestrator result bridge: worker result → orchestrator → upstream caller | `runBridge` | yes | yes |
 | 15 | Orchestrator WAN hydration: hydrate request → mock download → MinIO write → ready event | `runFanInBootstrap` | yes | yes |
-| 16 | Orchestrator replica failure: one of two replicas dies; Pulsar redelivers in-flight to survivor | shared-subscription failover | yes | yes |
+| 16 | Orchestrator replica failure (data plane): one of two `Shared`-subscribed replicas dies; Pulsar redelivers in-flight messages to the surviving Shared-mode consumer | Pulsar `Shared`-subscription redelivery (distinct from the `Failover` leader election in row 23) | yes | yes |
 | 17 | Worker pod replacement (Linux only): `kubectl delete pod`; new pod resumes from Pulsar cursor | pod-restart durability | yes | yes |
 | 18 | MinIO StatefulSet replacement: delete MinIO pod; verify cache still serves warm keys; cold fetch repopulates | MinIO durability | yes | yes |
 | 19 | Cluster bring-up phases all complete on a fresh `hostbootstrap cluster up` | `Daemon.Cluster.*` | yes | yes |
@@ -72,6 +72,64 @@ The integration suite must cover every row below. Rows 1–2 are also touched by
 | 30 | MinIO orphan scan: object younger than safety window is **never** deleted, even if unreachable | safety window | yes | yes |
 | 31 | Lifecycle reconcile is idempotent: 2× back-to-back reconcile = identical end state, no churn | reconcile fixed-point | yes | yes |
 | 32 | Audit topic replay: stop reconciler mid-tick; restart; new leader replays audit and does not re-execute completed actions | audit topic correctness | yes | yes |
+| 33 | `Daemon.WorkflowState` rehydration: kill a worker mid-stream; new replica reads back the Pulsar log on `AcquireClients` and reconstructs the in-memory fold to byte-identical state before resuming `Serve` | `runWorker` + `Daemon.WorkflowState.rehydrate` semantics (distinct from row 17's Pulsar-cursor resumption) | yes (training optimizer state, AlphaZero MCTS tree) | yes (durable conversation context across coordinator restarts) |
+| 34 | Producer-side dedup: the same payload published twice under the same idempotency key produces exactly one consumer delivery | `HasPulsar.publish` idempotent-producer wiring (distinct from row 8's consumer-side dedup cache) | yes (training-run submission) | yes (`client_idempotency_key` on `InferenceRequest`) |
+| 35 | Engine forced failure: `MockRequest.force_failure = true` → mock engine returns `EngineNativeError` → worker publishes `WorkerResult { FailurePayload }` → orchestrator routes the failure to the caller without retry | `HasEngine` terminal-failure semantics + `FailurePayload` propagation (distinct from row 9's neg-ack retry path) | yes (Failed / Cancelled status fields) | yes (Completed / Failed / Cancelled status on `InferenceResult`) |
+| 36 | Apple-Silicon host-daemon ↔ in-cluster Pulsar: a host LaunchDaemon process subscribes to `test.batch.apple-silicon` via the edge port, publishes to `test.result`, survives `cluster down` / `cluster up` | host-daemon path through `HasPulsar` against the in-cluster broker | yes (jitML `ForwardToHost` Apple inference RPC) | yes (infernix Apple host daemon on `inference.batch.apple-silicon.host`) |
+
+## Consumer surface mapping
+
+The coverage table above validates substrate plumbing. This section ties each row to the
+load-bearing surfaces in the two consumer repos so the representativeness claim is auditable:
+anyone can ask "does the substrate test harness simulate X?" and answer it by name.
+
+Substrate **does not** validate consumer-owned ML correctness, hardware acceleration, or
+real model matrices — those remain `infernix` and `jitML` obligations. See
+[../../DEVELOPMENT_PLAN/development_plan_standards.md § P](../../DEVELOPMENT_PLAN/development_plan_standards.md).
+
+### infernix
+
+| Consumer surface | Source in `~/infernix` | Covered by row(s) |
+|------------------|------------------------|---------------------|
+| Coordinator single-flight dispatch (`inference.request.<mode>` → `inference.batch.<mode>`) | `proto/infernix/runtime/inference.proto`, coordinator role | 13 (orchestrator fan-in), 8 (consumer dedup) |
+| Engine model bootstrap (`.ready` sentinel after MinIO put) | `infernix.cabal` engine role | 15 (`runFanInBootstrap`) |
+| Result bridge to durable conversation topic | infernix coordinator role | 14 (`runBridge`) |
+| Apple host daemon over `inference.batch.apple-silicon.host` | `infernix/CLAUDE.md`, Apple substrate | 36 |
+| Producer-side dedup on `client_idempotency_key` | `inference.proto` `InferenceRequest` | 34 |
+| Completed / Failed / Cancelled status propagation | `InferenceResult.status` | 35 |
+| `ContinuousWithArchive` for inference history | `infernix/README.md` | 26 |
+| Durable conversation context across coordinator restarts | conversation log; KV-prefix rebuild | 33 |
+| Worker pod replacement preserving Pulsar cursor | engine Deployment + Pulsar Shared sub | 17 |
+| MinIO model-weights bucket cold / warm fetch | `infernix-models` bucket | 10, 11, 12 |
+
+### jitML
+
+| Consumer surface | Source in `~/jitML` | Covered by row(s) |
+|------------------|---------------------|---------------------|
+| Training command + event stream | `proto/jitml/training.proto` | 3, 4, 13, 14 |
+| Multi-object checkpoint snapshot (`jitml-snapshots/.../{weights, optimizer, manifest}`) | `jitml.cabal` Store usage | 6, 7 (CAS), 22 (bucket reconciliation) |
+| Training optimizer state + AlphaZero MCTS tree rehydration | `WorkflowOwner` step-fold semantics | 33 |
+| Apple `ForwardToHost` cluster→host RPC (`inference.command.apple-silicon`) | `jitml/README.md` Apple hybrid mode | 36 |
+| `EventId` dedup over `WorkflowOwner` fold | `WorkflowOwner` semantics | 8 |
+| `FiniteSession` topic mode (training-run lifecycle) | jitML DEVELOPMENT_PLAN | 27 |
+| `OnlineLearning` topic mode (inference + training streams) | jitML DEVELOPMENT_PLAN | 28 |
+| MinIO GC / orphan scan with safety window (`gc.event.<substrate>`) | `jitml.cabal` GC handler | 29, 30 |
+| Idempotent reconciliation across substrates | jitML phases 13–15 | 31, 32 |
+| Idempotent producer for training-run submission | producer dedup key | 34 |
+| Engine terminal failure with error propagation | recoverable-vs-terminal error envelopes | 35 |
+| MinIO StatefulSet replacement preserving warm cache | snapshots / TensorBoard buckets | 18 |
+
+### Rows that are intentionally substrate-internal
+
+The following rows have no consumer-surface listing because they validate the substrate's own
+plumbing rather than any consumer-visible behavior:
+
+- 1 (lifecycle phases), 2 (SIGHUP reload), 5 (Shared subscription split), 19 (cluster
+  bring-up), 20 (`.data/` preservation), 21 (topic reconciliation), 23 (leader election),
+  24 (leader failover), 25 (`Ephemeral` retention), 32 (audit replay).
+
+These are load-bearing for both consumers indirectly — every consumer daemon goes through
+them — but they are not features either consumer's code calls out as their own.
 
 ## What each command exercises
 
@@ -101,7 +159,7 @@ Covers:
 ### `test integration`
 
 The `daemon-substrate-integration` cabal stanza. Requires a running kind cluster brought up
-by `hostbootstrap cluster up`. Covers rows 3–32 above.
+by `hostbootstrap cluster up`. Covers rows 3–36 above.
 
 ### `test lint`
 
@@ -141,6 +199,7 @@ would cost without coverage.
 ## Cross-references
 
 - Lifecycle policy story (the source for rows 21–32): [../architecture/lifecycle_policy.md](../architecture/lifecycle_policy.md)
+- Consumer workload sources (mapped to rows below): `~/infernix` (`infernix.cabal`, `proto/infernix/runtime/inference.proto`); `~/jitML` (`jitml.cabal`, `proto/jitml/*.proto`)
 - Mock engine specification: [../engineering/mock_engine.md](../engineering/mock_engine.md)
 - Cabal stanzas: [../engineering/cabal_layout.md](../engineering/cabal_layout.md)
 - CLI surface details: [../reference/cli_surface.md](../reference/cli_surface.md)

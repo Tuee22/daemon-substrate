@@ -2,7 +2,7 @@
 
 **Status**: Authoritative source
 **Supersedes**: N/A
-**Referenced by**: [../README.md](../README.md), [../../README.md](../../README.md), [daemon_roles.md](daemon_roles.md), [pulsar_minio_ssot.md](pulsar_minio_ssot.md), [../engineering/cabal_layout.md](../engineering/cabal_layout.md), [../../DEVELOPMENT_PLAN/development_plan_standards.md](../../DEVELOPMENT_PLAN/development_plan_standards.md)
+**Referenced by**: [../README.md](../README.md), [../../README.md](../../README.md), [daemon_roles.md](daemon_roles.md), [pulsar_minio_ssot.md](pulsar_minio_ssot.md), [lifecycle_policy.md](lifecycle_policy.md), [../engineering/cabal_layout.md](../engineering/cabal_layout.md), [../engineering/orchestration_topologies.md](../engineering/orchestration_topologies.md), [../engineering/batching.md](../engineering/batching.md), [../reference/proto_surface.md](../reference/proto_surface.md), [../../DEVELOPMENT_PLAN/development_plan_standards.md](../../DEVELOPMENT_PLAN/development_plan_standards.md)
 
 > **Purpose**: Define how downstream Haskell projects (`infernix`, `jitML`, future consumers)
 > depend on, configure, and extend `daemon-substrate`, and what the library does versus what
@@ -79,7 +79,10 @@ The library exposes these public modules (names finalized in the relevant phase)
 | `Daemon.Bootstrap` | `runFanInBootstrap` base loop (request → MinIO → ready event) | library |
 | `Daemon.Reconciler` | `runReconciler` base loop (leader-elected Pulsar + MinIO lifecycle) | library |
 | `Daemon.WorkflowState` | append-only workflow event ownership over Pulsar topics | library |
-| `Daemon.Proto.*` | protobuf envelopes for substrate-owned messages (workflow, control, orchestrator↔worker, lifecycle, audit) | library |
+| `Daemon.Proto.*` | generated protobuf envelopes for substrate-owned messages (workflow, control, orchestrator↔worker, lifecycle, audit) | library |
+| `Daemon.Wire.*` | hand-written Haskell ADT wrappers around `Daemon.Proto.*`; idiomatic application-facing types with `toProto` / `fromProto` codecs | library |
+| `Daemon.Topology.*` | typed builders for Pulsar topologies (`RequestResponse`, `FanOut`, `BatchedFanOut`, `FanIn`, `BatchedFanIn`, `Pipeline`, `Stream`) | library |
+| `Daemon.Batching.*` | substrate-owned batcher + multi-bucket scheduler (`BatchingPolicy`, `SchedulerPolicy`, `BatchingHooks`); see [../engineering/batching.md](../engineering/batching.md) | library |
 
 ## What the library owns
 
@@ -97,9 +100,25 @@ The library exposes these public modules (names finalized in the relevant phase)
   consumer's `LifecyclePolicy` — the reconciler creates / configures / archives / deletes
   topics and buckets, runs MinIO orphan-scan with safety windows, and audits every action to a
   compacted Pulsar topic. See [lifecycle_policy.md](lifecycle_policy.md).
-- The generic content-addressed `Daemon.MinIO.Store` (blobs / manifests / pointers with CAS).
+- The generic content-addressed `Daemon.MinIO.Store` (blobs / manifests / pointers with CAS),
+  plus the `Daemon.MinIO.Cache` pin API (`pin` / `unpin` / `isPinned`) for consumer-managed
+  hot-set protection.
 - Substrate-owned protobuf envelopes (orchestrator-to-worker, worker status, generic workflow
-  events, audit events).
+  events with `WorkflowKind` tagging + `deadline_at` + `payload` oneof, audit events with
+  lineage references). See [../reference/proto_surface.md](../reference/proto_surface.md).
+- **Pulsar topology primitives** (`RequestResponse`, `FanOut`, `BatchedFanOut`, `FanIn`,
+  `BatchedFanIn`, `Pipeline`, `Stream`) as typed Haskell builders that consumers compose into
+  their orchestrator workflow graph; substrate provisions topics, dispatches by
+  `payload_type` URL prefix, and surrenders subscriptions on drain. See
+  [../engineering/orchestration_topologies.md](../engineering/orchestration_topologies.md).
+- **Batching machinery** for the in-cluster orchestrator: the `Batcher` (temporal
+  accumulator + flush triggers + per-request response demux), the multi-bucket `Scheduler`
+  (hard-deadline preemption + WFQ + optional dwell), `BatchingPolicy` / `SchedulerPolicy`
+  Dhall surfaces in `LiveConfig`, and the `BatchingHooks` consumer extension. See
+  [../engineering/batching.md](../engineering/batching.md).
+- **Large-blob handoff convention**: payloads above `BootConfig.blobInlineThresholdBytes`
+  flow as `ObjectRef` in `WorkflowEvent.payload`, transparently materialized via
+  `Daemon.MinIO.Store.readBlob` on receive when the consumer opts in.
 
 ## What the consumer owns
 
@@ -119,7 +138,18 @@ The library exposes these public modules (names finalized in the relevant phase)
   engine selection, model registry).
 - The **Dhall on-disk layout** and loader. The library defines the shape; the consumer decides
   where Dhall files live and how they're staged.
-- Consumer-specific **protobuf payloads** that ride the substrate-owned envelopes.
+- Consumer-specific **payloads** that ride the substrate-owned envelopes. The substrate treats
+  every `WorkflowEvent.inline_bytes` payload as opaque and every `WorkflowEvent.object_ref`
+  payload as a MinIO reference; consumers choose whatever encoding fits (own proto family,
+  CBOR, raw tensor buffers, etc.). Each consumer namespaces its `payload_type` URLs under its
+  own root (`type.infernix.io/inference/v1/...`, `type.jitml.io/training/v1/...`) and
+  registers handlers with `Daemon.Consumer.HandlerRouter` keyed by URL prefix.
+- **The `BatchingHooks` combinability predicate** (`canCombine` + `bucketKey`) — the only
+  payload-aware extension into substrate's batcher. Substrate cannot inspect payloads; the
+  consumer's `bucketKey` choice is what makes scheduler fairness meaningful for the workload.
+- **Composition of topology primitives** into a workflow graph: choosing which Pulsar topics
+  exist, which `RequestResponse` / `FanOut` / `Pipeline` / `Stream` shapes wire them together,
+  and which workflows get batched.
 - The consumer's own deployment artifacts: Helm charts, bootstrap scripts, Dockerfiles, kind
   setup. The substrate's own test harness is *not* a model for consumer deployment; consumers
   reuse infernix's or jitML's existing patterns.
@@ -142,6 +172,25 @@ The library exposes these public modules (names finalized in the relevant phase)
 These rules match the consumer projects' own doctrines so the library never relaxes a
 constraint the consumer enforces.
 
+## Sealed consumer loops
+
+`infernix` and `jitML` are **sealed loops** over shared substrate primitives. They share
+infrastructure (envelope, topology, batching, lifecycle) but do not exchange domain payloads
+with each other:
+
+- `infernix` consumes only public-domain open-weight models (HuggingFace, Civitai, etc.) and
+  exposes its own inference protocol; it does not consume artifacts produced by `jitML`.
+- `jitML` trains and serves only its own model type; its checkpoints and training data are
+  not consumed by `infernix`.
+
+The substrate consequence: there is no third "shared-consumer" contract layer between the
+substrate and the consumers. Substrate-owned schemas cover envelopes / topology / batching /
+lifecycle. Consumer-owned schemas cover payloads. There is no substrate-mediated
+consumer-to-consumer protocol. If a future consumer breaks the sealed-loop assumption, the
+correct response is to introduce a shared-contracts library between those two consumers — not
+to push the schema down into substrate, which would force the substrate to evolve on
+consumer-domain timescales.
+
 ## Substrate-aware test harness
 
 The library code is substrate-agnostic; the *test harness* that proves the library works is
@@ -158,5 +207,9 @@ Consumers do not run the harness; it exists for `daemon-substrate`'s own validat
 
 - Daemon role definitions: [daemon_roles.md](daemon_roles.md)
 - Pulsar / MinIO split: [pulsar_minio_ssot.md](pulsar_minio_ssot.md)
+- Lifecycle policy and reconciler: [lifecycle_policy.md](lifecycle_policy.md)
+- Envelope schema and `payload_type` URL conventions: [../reference/proto_surface.md](../reference/proto_surface.md)
+- Orchestration topology primitives: [../engineering/orchestration_topologies.md](../engineering/orchestration_topologies.md)
+- Batching and scheduling: [../engineering/batching.md](../engineering/batching.md)
 - Cabal package layout: [../engineering/cabal_layout.md](../engineering/cabal_layout.md)
 - Plan-level surface contract: [`../../DEVELOPMENT_PLAN/development_plan_standards.md` § L](../../DEVELOPMENT_PLAN/development_plan_standards.md)

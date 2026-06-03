@@ -37,12 +37,25 @@ proto-lens-driven code generation into the cabal stanza.
 
 #### Deliverables
 
-- `proto/daemon_substrate/workflow.proto` (`WorkflowEvent`, `ObjectRef`)
+- `proto/daemon_substrate/workflow.proto` (`WorkflowEvent`, `WorkflowKind` enum, `ObjectRef`).
+  `WorkflowEvent` carries `event_id`, `produced_at`, `deadline_at` (`0` = no deadline),
+  `workflow_kind`, `payload_type`, and a `payload` oneof of `bytes inline_bytes` vs
+  `ObjectRef object_ref`. Substrate enforces the inline-vs-ref switch at publish time per
+  `BootConfig.blobInlineThresholdBytes`. See the schema in
+  [`../documents/reference/proto_surface.md`](../documents/reference/proto_surface.md).
 - `proto/daemon_substrate/control.proto` (`ControlEnvelope`, `Drain`, `Reload`)
 - `proto/daemon_substrate/orchestrator_worker.proto` (`OrchestratorToWorker`, `WorkerResult`,
   `SuccessPayload`, `FailurePayload`)
-- `proto/daemon_substrate/lifecycle.proto` (`LifecyclePhase` enum, `ReadinessReport`)
-- `proto/daemon_substrate/audit.proto` (`AuditEvent`, `ResourceRef`, `ReconcileAction`)
+- `proto/daemon_substrate/lifecycle.proto` (`LifecyclePhase` enum, `ReadinessReport`) — the
+  protobuf `LifecyclePhase` is the wire serialization of the Haskell
+  `Daemon.Lifecycle.LifecyclePhase` introduced in
+  [phase-3-bootconfig-liveconfig-lifecycle.md](phase-3-bootconfig-liveconfig-lifecycle.md)
+  Sprint 3.4; the two enums must have identical variant order
+  (`Load | Prereq | Acquire | Ready | Serve | Drain | Exit`).
+- `proto/daemon_substrate/audit.proto` (`AuditEvent`, `ResourceRef`, `ReconcileAction`).
+  `AuditEvent` includes `repeated ObjectRef source_refs` and `repeated ObjectRef result_refs`
+  for lineage in-edges and out-edges. Graph indexing (BFS/DFS traversal, predicate hooks)
+  is deferred to a later phase; the wire fields land now so consumers can populate them.
 - `proto/daemon_substrate_test/mock.proto` (`MockRequest`, `MockBatch`, `MockResult`)
 - `daemon-substrate.cabal` `build-tool-depends: proto-lens-protoc`, `autogen-modules`
 - Generated `Daemon.Proto.*` modules build and are importable
@@ -50,7 +63,10 @@ proto-lens-driven code generation into the cabal stanza.
 #### Validation
 
 `cabal build all` succeeds. A `daemon-substrate-unit` test round-trips one message of each
-type (encode → decode → equality).
+type (encode → decode → equality). Round-trip test asserts the new `WorkflowEvent.payload`
+oneof preserves identity across the `inline_bytes` and `object_ref` branches, and that
+`WorkflowKind` round-trips for every variant (including `WORKFLOW_KIND_UNSPECIFIED` for
+proto3 default behavior).
 
 ### Sprint 4.2: `HasEngine` typeclass + engine-handle sum [Planned]
 
@@ -60,16 +76,28 @@ type (encode → decode → equality).
 
 #### Objective
 
-Define `Daemon.Engine.HasEngine`, `EngineRequest`, `EngineResponse`, `EngineError`, and the
-`SubprocessEngine` / `NativeEngine` constructors. Both variants implement `HasEngine`.
+Define `Daemon.Engine.HasEngine` with a **batch-native** handler signature:
+
+```haskell
+engineCall :: NonEmpty EngineRequest -> m (NonEmpty (Either EngineError EngineResponse))
+```
+
+Per-request callers (e.g., the test echo engine) wrap a singleton `NonEmpty`. The batch-native
+shape is required so the Phase 5 `Daemon.Batching.Batcher` can dispatch without per-request
+synchronization; consumers' engines (`infernix` LLM serving stacks, `jitML` training kernels)
+are already batch-native in practice. Define `EngineRequest`, `EngineResponse`, `EngineError`,
+and the `SubprocessEngine` / `NativeEngine` constructors. Both variants implement the batched
+`HasEngine`.
 
 #### Deliverables
 
-- `src/Daemon/Engine.hs` populated
+- `src/Daemon/Engine.hs` populated with the batched signature
 - trivial native echo engine + trivial subprocess echo engine under
-  `src/Daemon/Test/EchoEngines.hs`
-- unit tests covering: round-trip through both variants, error propagation, timeout
-  (subprocess variant)
+  `src/Daemon/Test/EchoEngines.hs` (both implement the batched signature, returning the input
+  list unchanged)
+- unit tests covering: singleton-batch round-trip, multi-element-batch round-trip, per-element
+  error propagation (one element fails, others succeed), batch-wide error (engine crash),
+  timeout (subprocess variant)
 
 ### Sprint 4.3: Mock engine [Planned]
 
@@ -79,17 +107,24 @@ Define `Daemon.Engine.HasEngine`, `EngineRequest`, `EngineResponse`, `EngineErro
 
 #### Objective
 
-Land `Daemon.Test.MockEngine` — a `NativeEngine` that reads input bytes from a MinIO blob
-referenced in the `EventEnvelope`, returns sha256(input) (32 bytes) as the result, and honors
-a `force_failure` flag for retry-path coverage. No GPU, no FFI, no Python, no Metal, no CUDA.
+Land `Daemon.Test.MockEngine` — a `NativeEngine` that accepts a `NonEmpty MockRequest`,
+reads input bytes from the MinIO blob referenced by each `MockRequest.weight_key`, returns
+`NonEmpty MockResult` where each result is `sha256(request_id || weight bytes)` (32 bytes),
+and honors `MockRequest.force_failure` per element for retry-path coverage. The batched
+signature exercises the Phase 5 batcher path end-to-end. No GPU, no FFI, no Python, no Metal,
+no CUDA. See [`../documents/engineering/mock_engine.md`](../documents/engineering/mock_engine.md)
+for the full message contract.
 
 Same instance is reused by every integration test row in Phase 8.
 
 #### Deliverables
 
 - `src/Daemon/Test/MockEngine.hs` populated (exposed for the `daemon-substrate-test`
-  executable; not part of consumer-facing surface)
-- unit tests covering: happy path, forced-failure path, cache cold / warm paths
+  executable; not part of consumer-facing surface). Implements the batched
+  `engineCall :: NonEmpty MockRequest -> m (NonEmpty (Either EngineError MockResult))`.
+- unit tests covering: singleton batch happy path, multi-element batch happy path, mixed
+  success/failure in a single batch (one `force_failure = true`, others succeed), cache cold
+  / warm paths
 
 ### Sprint 4.4: `Daemon.Audit` compacted-topic helper [Planned]
 
@@ -113,17 +148,77 @@ Operations:
 - unit tests covering: publish round-trip, replay after multiple writes to the same key
   (compaction semantics), concurrent-publish dedup
 
+### Sprint 4.5: `Daemon.Wire.*` hand-written ADTs + round-trip property tests [Planned]
+
+**Status**: Planned
+**Blocked by**: 4.1
+**Docs to update**: `documents/reference/proto_surface.md`, `system-components.md`
+
+#### Objective
+
+Define hand-written Haskell ADTs in `Daemon.Wire.*` that mirror every generated
+`Daemon.Proto.*` envelope and expose `toProto` / `fromProto` codecs. Application code uses
+`Daemon.Wire.*`; only the Pulsar publish / subscribe boundary touches `Daemon.Proto.*`. The
+generated `proto-lens` lens-records are not idiomatic Haskell and should not leak into call
+sites.
+
+#### Deliverables
+
+- `src/Daemon/Wire/Workflow.hs` — `WorkflowEvent` ADT with `Maybe UTCTime` for `deadline_at`
+  (Nothing when the proto field is 0), a Haskell `WorkflowKind` sum, and a `WirePayload =
+  WireInline ByteString | WireObjectRef ObjectRef` sum.
+- `src/Daemon/Wire/Control.hs` — `ControlEnvelope`, `Drain`, `Reload` ADTs.
+- `src/Daemon/Wire/OrchestratorWorker.hs` — `OrchestratorToWorker`, `WorkerResult`,
+  outcome sum.
+- `src/Daemon/Wire/Lifecycle.hs` — `LifecyclePhase`, `ReadinessReport` (mirrors the existing
+  Haskell `Daemon.Lifecycle.LifecyclePhase`).
+- `src/Daemon/Wire/Audit.hs` — `AuditEvent` with `[ObjectRef]` lineage lists.
+- Round-trip property tests in `daemon-substrate-unit`: for every Wire ADT,
+  `decodeMessage . encodeMessage . toProto . fromProto === id` over a hedgehog generator,
+  1000 iterations per envelope type.
+
+#### Validation
+
+Property suite passes 1000 iterations per envelope type. A linter check (or grep gate) in
+`daemon-substrate-haskell-style` asserts that no module outside `src/Daemon/Wire/` or the
+publish/subscribe boundary imports `Daemon.Proto.*` directly.
+
+#### Module Surface
+
+```haskell
+data WorkflowEvent = WorkflowEvent
+  { eventId      :: !Text
+  , producedAt   :: !UTCTime
+  , deadlineAt   :: !(Maybe UTCTime)   -- Nothing when proto deadline_at = 0
+  , workflowKind :: !WorkflowKind
+  , payloadType  :: !PayloadTypeUrl
+  , payload      :: !WirePayload
+  }
+
+data WorkflowKind = Training | Inference | Evaluation | Ingestion | Audit | Custom
+
+data WirePayload = WireInline !ByteString | WireObjectRef !ObjectRef
+
+toProto   :: WorkflowEvent -> Daemon.Proto.Workflow.WorkflowEvent
+fromProto :: Daemon.Proto.Workflow.WorkflowEvent -> Either WireError WorkflowEvent
+```
+
 ## Documentation Requirements
 
 **Engineering docs to create/update:**
-- `documents/engineering/mock_engine.md` updates from "planned" to current-state.
+- `documents/engineering/mock_engine.md` updates from "planned" to current-state — including
+  the batch-native `NonEmpty MockRequest -> NonEmpty MockResult` shape.
 - `documents/architecture/lifecycle_policy.md` updates the "Library modules" entry for
   `Daemon.Audit` from forward-looking to current-state.
 
 **Reference docs to create/update:**
-- `documents/reference/proto_surface.md` updates from "planned" to current-state declarative;
-  the new `audit.proto` row reads as the implemented schema.
+- `documents/reference/proto_surface.md` updates from "planned" to current-state declarative.
+  The `workflow.proto` schema reads as the implemented shape with `deadline_at`,
+  `WorkflowKind`, and the `payload` oneof; the `audit.proto` schema includes the lineage
+  reference fields (graph indexing deferred). The new `## Wire-layer wrappers` section reads
+  as the implemented surface after Sprint 4.5.
 
 **Cross-references to add:**
-- `system-components.md` flips `Daemon.Engine`, `Daemon.Audit`, and `Daemon.Proto.*` rows to
-  `Implemented: yes`.
+- `system-components.md` flips `Daemon.Engine`, `Daemon.Audit`, `Daemon.Proto.*`, and
+  `Daemon.Wire.*` rows to `Implemented: yes`. The `HasEngine` row reflects the batch-native
+  signature.
