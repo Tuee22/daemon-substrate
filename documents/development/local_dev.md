@@ -17,8 +17,7 @@
 ## Current Status
 
 The current repository supports the Haskell library, `daemon-substrate-test` executable, local
-Cabal test stanzas, and the live Apple Silicon kind harness through the active Phase 8 Sprint
-8.6 work. Local validation is:
+Cabal test stanzas, and the live kind harness on both supported cohorts. Local validation is:
 
 ```bash
 cabal build all --enable-tests
@@ -28,7 +27,9 @@ cabal test daemon-substrate-unit daemon-substrate-lifecycle daemon-substrate-int
 Apple Silicon live `daemon-substrate-test cluster up` brings up deployable Harbor / Pulsar /
 MinIO dependencies, PVC-backed state, orchestrator pods, managed edge-port forwarding, and a
 host worker that completes a request -> orchestrator -> worker -> response smoke handoff.
-Full `Ready` closure remains active while Linux CPU validation finishes.
+Linux live `hostbootstrap cluster up` brings up the outer service container, inner kind
+cluster, Harbor / Pulsar / MinIO dependencies, orchestrator and worker Deployments,
+retained PVCs, and the live integration readiness gate.
 
 ## One-time install
 
@@ -126,9 +127,9 @@ is fast; `hostbootstrap cluster delete` (thorough teardown) also preserves `./.d
 ## When things go wrong
 
 - `daemon-substrate-test cluster status` currently reports known kind clusters and node
-  readiness. The target lifecycle phase / heartbeat report lands with the full `Ready` gate.
-  Long-running phases such as image build and dependency rollout can take minutes; wall-clock
-  duration alone is not failure.
+  readiness. Lifecycle phase / heartbeat detail remains target telemetry. Long-running
+  phases such as image build and dependency rollout can take minutes; wall-clock duration
+  alone is not failure.
 - The kubeconfig path is repo-local — your shell's `~/.kube/config` is never modified. To run
   `kubectl` directly: `KUBECONFIG=./.build/daemon-substrate.kubeconfig kubectl get pods -A`
   (Apple) or via `hostbootstrap run` on Linux.
@@ -140,10 +141,8 @@ is fast; `hostbootstrap cluster delete` (thorough teardown) also preserves `./.d
 ## Cross-references
 
 - Current status: the executable parser, Cabal test stanzas, live cluster runner
-  interpreters, deployable dependency charts, PVC-backed Apple kind state, and live service
-  loops are implemented. Remaining live validation is tracked by
-  `DEVELOPMENT_PLAN/phase-7-hostbootstrap-and-project-dockerfile.md` Sprint 7.3 and
-  `DEVELOPMENT_PLAN/phase-8-test-harness-integration.md` Sprint 8.6.
+  interpreters, deployable dependency charts, PVC-backed kind state, live service loops, and
+  both-cohort readiness validation are implemented.
 - hostbootstrap integration: [../engineering/hostbootstrap_integration.md](../engineering/hostbootstrap_integration.md)
 - Testing strategy: [testing_strategy.md](testing_strategy.md)
 - Apple-specific runbook: [../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md)

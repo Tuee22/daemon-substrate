@@ -27,8 +27,9 @@ Current implementation note: Phase 8 Sprint 8.6 implements live Cabal delegation
 `test ...`, concrete kind / kubectl / helm / Docker execution for `cluster ...` actions,
 live Pulsar and MinIO admin operations through the dependency pods, PVC-backed dependency
 state, live worker / orchestrator `service` loops, managed Apple edge-port forwarding, and
-Apple live workflow handoff. Full kind-cluster readiness remains active because Linux CPU
-validation is still open.
+Apple live workflow handoff. Linux hostbootstrap container bring-up, preserved-state
+kind-cluster cycles, worker/orchestrator readiness, retained PVC binding, edge-port
+preservation, and the `daemon-substrate-integration` live readiness gate are validated.
 
 | Command | Purpose | Long-running? | Idempotent? |
 |---------|---------|---------------|-------------|
@@ -36,9 +37,9 @@ validation is still open.
 | `daemon-substrate-test cluster down` | Tear down the kind cluster | no | yes |
 | `daemon-substrate-test cluster status` | Report current kind/node status; target lifecycle state | no | yes (read-only) |
 | `daemon-substrate-test test unit` | Run `daemon-substrate-unit` test suite | no | yes |
-| `daemon-substrate-test test integration` | Run `daemon-substrate-integration` test suite; target live suite requires a running cluster | no | yes |
+| `daemon-substrate-test test integration` | Run `daemon-substrate-integration` live readiness suite; requires a running cluster | no | yes |
 | `daemon-substrate-test test lint` | Run lint suite (ormolu, hlint, doc, proto) | no | yes |
-| `daemon-substrate-test test all` | Run lint + unit + integration in order | no | yes |
+| `daemon-substrate-test test all` | Run lint + unit + lifecycle + integration in order | no | yes |
 | `daemon-substrate-test service --role worker --config <path>` | Run the worker daemon | **yes** | n/a |
 | `daemon-substrate-test service --role orchestrator --config <path>` | Run the orchestrator daemon | **yes** | n/a |
 
@@ -71,8 +72,8 @@ Read-only. Reports:
 
 The target status report also includes `lifecyclePhase`, `lifecycleDetail`,
 `lifecycleHeartbeatAt`, in-cluster workload readiness, and the chosen edge port. That richer
-report is part of the remaining full-`Ready` cluster gate. The current command does not mutate
-Kubernetes resources, repo-local state, or the edge-port record.
+report remains target telemetry. The current command does not mutate Kubernetes resources,
+repo-local state, or the edge-port record.
 
 ### `test unit`
 
@@ -80,9 +81,10 @@ Invokes `cabal test daemon-substrate-unit`. Pure Haskell tests; no cluster requi
 
 ### `test integration`
 
-Invokes `cabal test daemon-substrate-integration`. The target preflight verifies the cluster
-is `Ready` and fails fast if not; that gate becomes authoritative after Linux CPU live
-validation closes. The suite asserts the surface described in
+Invokes `cabal test daemon-substrate-integration`. The suite requires a repo-local
+kubeconfig from `hostbootstrap cluster up`; it fails fast if the live cluster does not match
+the supported node topology, dependency rollouts, daemon workload readiness, retained PVCs,
+or edge-port record described in
 [../development/testing_strategy.md § test integration](../development/testing_strategy.md).
 
 ### `test lint`

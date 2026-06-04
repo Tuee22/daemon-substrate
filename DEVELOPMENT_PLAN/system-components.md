@@ -227,8 +227,9 @@ The `daemon-substrate-test` executable is implemented in Phase 8 Sprint 8.1 with
 for `test ...`, concrete kind / kubectl / helm / Docker execution for `cluster ...`, live
 Pulsar and MinIO admin operations through dependency pods, PVC-backed dependency state, and
 live worker / orchestrator service loops. Managed Apple edge-port forwarding, host-worker
-handoff, and live request -> orchestrator -> host worker -> response handoff are validated.
-Full live-cluster readiness is still active because Linux CPU validation remains open.
+handoff, live request -> orchestrator -> host worker -> response handoff, Linux
+hostbootstrap container bring-up, two preserved-state Linux `cluster down` / `cluster up`
+cycles, and the `daemon-substrate-integration` live readiness gate are validated.
 
 ## Bootstrap entrypoints
 
@@ -240,7 +241,8 @@ for the integration shape.
 | Entrypoint | Cohort | Model | Delegates to |
 |------------|--------|-------|--------------|
 | `hostbootstrap cluster up` (via `hostbootstrap.dhall` `H.Substrate.AppleSilicon` entry) | apple-silicon | `HostDaemon` | LaunchDaemon running `./.build/daemon-substrate-test service --role worker` |
-| `hostbootstrap cluster up` (via `hostbootstrap.dhall` `H.Substrate.LinuxCpu` entry) | linux-cpu | `Container` (`service = True`) | project container running `daemon-substrate-test cluster up` |
+| `hostbootstrap cluster up` (via `hostbootstrap.dhall` `H.Substrate.LinuxCpu` entry) | linux-cpu | `Container` (`service = True`) | project container running `daemon-substrate-test cluster up && sleep infinity` |
+| `hostbootstrap cluster up` (via `hostbootstrap.dhall` `H.Substrate.LinuxGpu` entry) | gpu-capable Linux host, CPU harness | `Container` (`service = True`, `flavor = Cpu`) | same CPU harness container; this is compatibility for hostbootstrap detection, not a GPU cohort |
 
 ## Project-side bootstrap files
 
@@ -249,13 +251,15 @@ for the integration shape.
 | `hostbootstrap.dhall` | typed per-substrate config consumed by `hostbootstrap`; declares Container / HostDaemon model and mounts |
 | `docker/linux-substrate.Dockerfile` | thin project Dockerfile (`FROM ${BASE_IMAGE}` plus the project's own build steps); the heavy toolchain is in the base |
 
-`hostbootstrap.dhall` and `docker/linux-substrate.Dockerfile` are implemented in Phase 7
-Sprints 7.1 and 7.2 and validated for shape/thinness. Apple Silicon `hostbootstrap doctor`,
-`build`, `cluster up`, LaunchDaemon inspection, and `cluster down` are validated in Phase 7
-Sprint 7.3. Apple Silicon inner kind preserved-state bring-up with PVC-backed dependency
-state, named native Pulsar Failover leadership, managed edge-port forwarding, host-worker
-handoff, and live workflow handoff is validated. Linux CPU and full `Ready` kind-cluster
-validation remain active.
+`hostbootstrap.dhall` and `docker/linux-substrate.Dockerfile` are implemented and validated.
+Apple Silicon `hostbootstrap doctor`, `build`, `cluster up`, LaunchDaemon inspection, and
+`cluster down` are validated in Phase 7 Sprint 7.3. Linux hostbootstrap `doctor`, `build`,
+and `cluster up` are validated on an Ubuntu 24.04 amd64 host detected as `linux-gpu`, mapped
+by this repo to the CPU-flavored harness container. Apple Silicon inner kind
+preserved-state bring-up with PVC-backed dependency state, named native Pulsar Failover
+leadership, managed edge-port forwarding, host-worker handoff, and live workflow handoff is
+validated. Linux preserved-state bring-up, retained PV reattachment, orchestrator and worker
+rollouts, edge-port preservation, and live readiness integration are validated.
 
 ## Base image
 

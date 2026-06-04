@@ -49,8 +49,13 @@ cluster, advertises Pulsar lookup results through the in-cluster
 `daemon-substrate-test-pulsar` service, and exposes one named active native consumer for the
 reconciler Failover subscription. The Apple host worker reads the persisted edge-port record,
 connects through managed Pulsar / Pulsar admin / MinIO localhost forwards, and has completed
-a live request -> orchestrator -> host worker -> response smoke handoff. Full `Ready` cluster
-reconciliation remains active because Linux CPU validation has not run.
+a live request -> orchestrator -> host worker -> response smoke handoff.
+
+Linux live bring-up is validated through `hostbootstrap cluster up` from the service
+container. The container joins Docker's `kind` network, exports kind's internal kubeconfig,
+waits for node readiness, deploys the same dependency StatefulSets, rolls out the
+orchestrator Deployment plus the two-replica worker Deployment, and keeps the retained
+Harbor / Pulsar / MinIO PVCs bound across consecutive `cluster down && cluster up` cycles.
 
 ## In-cluster components
 
@@ -177,7 +182,9 @@ packaged harness files are the default source mounted into live pods.
 | Linux CPU (outer container) | `./.data/runtime/daemon-substrate.kubeconfig` |
 
 Neither path mutates the operator's `~/.kube/config`. The repo-local kubeconfig is the only
-authoritative handle to the harness cluster.
+authoritative handle to the harness cluster. On Linux the kubeconfig is exported with
+kind's internal endpoint because the command runs inside the outer container; the container
+is attached to Docker's `kind` network before Kubernetes resources are applied.
 
 ## Edge port discovery
 
@@ -202,7 +209,9 @@ the [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap) base image
 (`docker.io/tuee22/hostbootstrap:basecontainer-cpu-*`). The project Dockerfile
 (`docker/linux-substrate.Dockerfile`) is intentionally thin: `FROM ${BASE_IMAGE}` plus the
 project's own build steps. Every heavy toolchain layer (GHC 9.12, Cabal, `kubectl`, `helm`,
-`kind`, `protoc`, `ormolu`, `hlint`, warm Haskell store) lives in the base.
+`kind`, `protoc`, `ormolu`, `hlint`, warm Haskell store) lives in the base. The service
+container runs `daemon-substrate-test cluster up && sleep infinity`, so a successful
+reconciliation does not trigger hostbootstrap's restart policy to loop the bring-up command.
 
 See [hostbootstrap_integration.md](hostbootstrap_integration.md) for the full integration
 shape and the `hostbootstrap.dhall` that declares the per-substrate model.

@@ -60,8 +60,8 @@ hostbootstrap cluster up          # build binary, install LaunchDaemon
    storage, Pulsar / MinIO admin setup, orchestrator Deployment, and reconciler Failover
    leadership. It also starts managed localhost forwards for Pulsar, Pulsar admin, and
    MinIO; the host worker has been validated through a live request -> orchestrator -> host
-   worker -> response smoke handoff. Full `Ready` validation remains active until Linux CPU
-   cohort validation runs.
+   worker -> response smoke handoff. The matching Linux cohort `Ready` gate is also
+   validated.
 
 Subsequent bring-ups skip prerequisite verification when the active checkpoints match. The
 LaunchDaemon starts the worker before any user logs in — supporting headless remote SSH.

@@ -15,6 +15,9 @@
 - The substrate is brought up by `hostbootstrap cluster up`, which builds a thin project
   container `FROM` the `hostbootstrap` base tag (per the `Container` model declared in
   `hostbootstrap.dhall`) and runs it long-running with `service = True`.
+- If hostbootstrap detects a GPU-capable Linux host as `linux-gpu`, this repository still
+  selects the CPU-flavored harness container. That compatibility entry does not create a GPU
+  test cohort.
 - The container carries the compiled `daemon-substrate-test` binary, GHC (from the base), the
   staged Dhall, and the `kind` binary.
 - The worker daemon runs *inside* the kind cluster as a two-replica Deployment with pod
@@ -57,8 +60,9 @@ hostbootstrap cluster up      # build container, start service, bring cluster up
 3. Runs the container long-running (`service = True`, `--restart unless-stopped`) with the
    declared mounts: `./.data` for durable state, `/var/run/docker.sock` so the container can
    drive `kind`
-4. The container starts `daemon-substrate-test cluster up`, which reconciles the kind cluster
-   (Harbor, Pulsar, MinIO, orchestrator, worker Deployment)
+4. The container starts `daemon-substrate-test cluster up`, attaches itself to Docker's
+   `kind` network, exports kind's internal kubeconfig, reconciles the kind cluster (Harbor,
+   Pulsar, MinIO, orchestrator, worker Deployment), and then stays resident for diagnostics
 
 The base image is pulled by default. Pass `hostbootstrap cluster up --build-base` to build the
 base locally from source.
@@ -126,9 +130,10 @@ If the build fails partway through, Docker preserves the successful layers. Re-r
 
 ### Kind cluster unreachable from project container
 
-The container joins Docker's private `kind` network on first `cluster status` invocation. If
-the container was started before the kind network existed, restart it:
-`hostbootstrap cluster down && hostbootstrap cluster up`.
+The container joins Docker's private `kind` network during `cluster up` and `cluster status`
+before using the repo-local kubeconfig. If Docker reports the container is not attached to
+that network, rerun `daemon-substrate-test cluster up` from inside the service container or
+restart the outer service with `hostbootstrap cluster down && hostbootstrap cluster up`.
 
 ### Worker replicas stuck `Pending`
 

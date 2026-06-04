@@ -118,7 +118,8 @@ Depends on Phase 5 because the chart needs working daemon binaries to deploy.
 
 ### Phase 7 — hostbootstrap.dhall and thin project Dockerfile
 
-Land `hostbootstrap.dhall` at the repository root (declaring `Container` for Linux CPU and
+Land `hostbootstrap.dhall` at the repository root (declaring `Container` for Linux CPU,
+the same CPU-flavored `Container` for GPU-capable Linux hosts detected by hostbootstrap, and
 `HostDaemon` for Apple Silicon) and the thin `docker/linux-substrate.Dockerfile`
 (`FROM ${BASE_IMAGE}` plus the project's own build steps). After this phase, an operator can
 run `hostbootstrap cluster up` on either cohort and reach a `Ready` cluster. Substrate
@@ -133,12 +134,12 @@ orchestrator / worker) must exist before the outer entry can deliver a `Ready` c
 
 Land the `daemon-substrate-test` executable, the four cabal test stanzas
 (`daemon-substrate-unit`, `daemon-substrate-lifecycle`, `daemon-substrate-integration`,
-`daemon-substrate-haskell-style`), and the end-to-end coverage described in
+`daemon-substrate-haskell-style`), the live cluster interpreters, and the readiness gate
+described in
 [`../documents/development/testing_strategy.md`](../documents/development/testing_strategy.md):
-cluster lifecycle, orchestrator → worker handoff, MinIO fetch, mock engine result publish,
-cache lifecycle, pod replacement, MinIO replacement, lifecycle reconciler workflows across
-all four `TopicLifecycle` modes, leader-election failover, orphan-scan safety windows,
-audit-topic replay.
+cluster lifecycle, dependency rollouts, retained PVCs, daemon workload readiness, edge-port
+state, and the workflow coverage audit map tying unit coverage plus live-smoke evidence to
+the consumer-representative workflows.
 
 Depends on Phase 7 because integration tests need the bootstrap-driven cluster bring-up.
 

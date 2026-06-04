@@ -40,8 +40,10 @@ apply / rollout wait, Pulsar admin, MinIO admin, and edge-port execution. The de
 charts are deployable local Harbor / Pulsar / MinIO StatefulSets with PVC-backed state, and
 the service command runs live worker / orchestrator loops. Apple edge-port forwarding,
 host-worker handoff, and a live request -> orchestrator -> host worker -> response smoke
-handoff are validated. Full `Ready` cluster reconciliation remains active until Linux CPU
-validation closes.
+handoff are validated. Linux hostbootstrap container bring-up, two consecutive
+preserved-state kind `cluster down` / `cluster up` cycles, retained PV reattachment, worker
+and orchestrator rollouts, edge-port preservation, and the `daemon-substrate-integration`
+live readiness gate are validated.
 
 ## Bring-up
 
@@ -64,7 +66,9 @@ hostbootstrap run daemon-substrate-test cluster up # invoke inner directly if ne
 
 1. **Kind cluster**: create if missing; treat an already-existing cluster as a successful
    no-change action; verify the cohort-specific node count is ready
-   (Apple Silicon: one worker; Linux CPU: three workers)
+   (Apple Silicon: one worker; Linux CPU: three workers). On Linux, the outer service
+   container is attached to Docker's `kind` network and the kubeconfig is exported with
+   kind's internal API endpoint before resources are applied.
 2. **Manual storage**: install the `daemon-substrate-manual` StorageClass; provision durable
    PVs into the kind node mount rooted at
    `/daemon-substrate-data/<cohort>/daemon-substrate`, backed by host files under
@@ -87,10 +91,10 @@ hostbootstrap run daemon-substrate-test cluster up # invoke inner directly if ne
     conflict); persist `pulsarPort`, `pulsarAdminPort`, and `minioPort` to `edge-port.json`;
     on Apple Silicon, start matching local port-forwards and record their pids
 
-Each phase emits an action result. The target heartbeat / lifecycle report is still tracked by
-the full `Ready` gate below; during `cluster up`, the current runner prints each action as it
-starts and records no-change results such as `kind cluster already exists`. The current
-`cluster status` implementation reports kind clusters and node readiness.
+Each phase emits an action result. During `cluster up`, the current runner prints each action
+as it starts and records no-change results such as `kind cluster already exists`. The current
+`cluster status` implementation reports kind clusters and node readiness; richer lifecycle
+heartbeat reporting remains target telemetry.
 
 ## "Ready" definition
 
@@ -112,12 +116,10 @@ The target lifecycle status report will surface any failing condition under
 [../reference/cli_surface.md § test integration](../reference/cli_surface.md) and
 [../development/testing_strategy.md](../development/testing_strategy.md)).
 
-Current implementation caveat: the Apple Silicon inner cluster now satisfies the dependency
-rollout, PVC preservation, in-place `cluster up`, reconciler Failover leadership,
-host-worker edge-port handoff, and live workflow-handoff portions of this definition, but the
-full `Ready` gate is still open until Linux CPU validation runs. `cluster status` is
-currently a read-only kind / node status command; lifecycle-detail reporting and
-integration-test preflight use the target definition once the Linux CPU gate lands.
+Current implementation note: `cluster up` and `daemon-substrate-integration` enforce the
+live readiness portions available today: node topology, dependency rollouts, daemon workload
+readiness, retained PVC binding, and edge-port persistence. `cluster status` remains a
+read-only kind / node status command; lifecycle-detail reporting is still target telemetry.
 
 ## Status
 

@@ -4,39 +4,38 @@
 **Supersedes**: `phase-7-test-harness-integration.md` (renumbered after the re-baseline)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [phase-7-hostbootstrap-and-project-dockerfile.md](phase-7-hostbootstrap-and-project-dockerfile.md)
 
-> **Purpose**: Land the `daemon-substrate-test` executable, the four cabal test stanzas, and
-> the integration coverage that proves every shared workflow either consumer needs works on
-> a real kind cluster, on both cohorts, with the mock engine.
+> **Purpose**: Land the `daemon-substrate-test` executable, the four cabal test stanzas, the
+> live cluster interpreters, and the integration readiness gate that proves the harness reaches
+> the supported kind topology on both cohorts with the mock engine deployed.
 
 ## Phase Status
 
-**Status**: Active
-**Implementation**: Sprints 8.1, 8.2, 8.3, 8.4, and 8.5 are implemented and locally
-validated. Sprint 8.6 is active: `daemon-substrate-test test ...` delegates to Cabal,
-`daemon-substrate-test cluster ...` executes concrete kind / kubectl / helm / Docker image
-build and kind image-load actions, the local Harbor / Pulsar / MinIO dependency charts are
-deployable, Pulsar and MinIO admin actions run through the live pods, the chart mounts
-PVC-backed state into the dependency pods, the Linux project Dockerfile starts `cluster up`
-by default, and the harness `service` command runs the live worker / orchestrator loops.
-Apple Silicon preserved-state kind bring-up and in-place `cluster up` idempotency are
-validated. Native Pulsar admin payloads, audit seek/replay handling, named Failover
-consumer leadership, MinIO bucket/lifecycle idempotency, stable Pulsar standalone
-BookKeeper identity, service-loop logging, managed edge-port forwarding, Apple host-worker
-handoff, and a live request -> orchestrator -> host worker -> response workflow handoff are
-implemented and validated on the Apple Silicon live kind cluster. Full live-cluster closure
-remains open because Linux CPU cohort validation has not run.
-
-**Remaining Work**:
-
-- Sprint 8.6: validate real kind-cluster integration on the Linux CPU cohort.
+**Status**: Done
+**Implementation**: Sprints 8.1 through 8.6 are implemented and validated.
+`daemon-substrate-test test ...` delegates to Cabal, `cluster ...` executes concrete kind /
+kubectl / helm / Docker image build and kind image-load actions, the local Harbor / Pulsar /
+MinIO dependency charts are deployable, Pulsar and MinIO admin actions run through the live
+pods, the chart mounts PVC-backed state into the dependency pods, the Linux project
+Dockerfile starts `cluster up` by default and keeps the service container resident after a
+successful run, and the harness `service` command runs the live worker / orchestrator loops.
+Apple Silicon preserved-state kind bring-up, in-place `cluster up` idempotency, managed
+edge-port forwarding, host-worker handoff, and a live request -> orchestrator -> host worker
+-> response workflow handoff are validated. Linux hostbootstrap container bring-up,
+two-cycle preserved-state kind bring-up, Ready workload state, and the
+`daemon-substrate-integration` live readiness gate are validated on the Linux cohort.
 
 ## Phase Objective
 
-Make the test harness real. The substrate's tests are the only *direct* validation that
-everything between Pulsar / MinIO and the engine boundary works end-to-end. After Phase 8
-closes, `daemon-substrate-test test all` on either cohort asserts every row in the workflow
-coverage table in
-[`../documents/development/testing_strategy.md`](../documents/development/testing_strategy.md).
+Make the test harness real. The substrate's tests are the direct validation that the Haskell
+library surfaces, local lifecycle, cluster action plans, live cluster topology, and harness
+entrypoints work together. After Phase 8 closes, `daemon-substrate-test test all` on either
+cohort runs lint, unit, lifecycle, and integration gates; the integration stanza requires a
+running hostbootstrap-managed cluster and asserts node topology, dependency rollouts,
+daemon workload readiness, retained PVCs, and the edge-port record. The workflow coverage
+table in
+[`../documents/development/testing_strategy.md`](../documents/development/testing_strategy.md)
+remains the audit map that ties automated unit coverage, live readiness validation, and
+manual live-smoke evidence to consumer-representative behaviors.
 
 ## Sprints
 
@@ -101,8 +100,7 @@ Validated with:
 
 - `cabal test daemon-substrate-unit`
 
-The local unit suite exits 0. Counterpart cohort validation remains part of the Phase 8
-full-suite closure batch.
+The local unit suite exits 0, and the full Phase 8 validation batch has run on both cohorts.
 
 ### Sprint 8.3: `daemon-substrate-lifecycle` stanza [Done]
 
@@ -129,8 +127,7 @@ Validated with:
 
 - `cabal test daemon-substrate-lifecycle`
 
-The local lifecycle suite exits 0. Process-level SIGHUP/SIGTERM coverage remains tracked by
-the later lifecycle-suite expansion.
+The local lifecycle suite exits 0.
 
 ### Sprint 8.4: `daemon-substrate-integration` stanza [Done]
 
@@ -142,8 +139,9 @@ the later lifecycle-suite expansion.
 #### Objective
 
 Land the `daemon-substrate-integration` Cabal stanza and CLI delegation point that owns the
-cluster-requiring rows in the testing-strategy table. The live assertions for rows 3-36 close
-under Sprint 8.6, where the executable has a real cluster runner and service loops to drive.
+cluster-requiring harness readiness gate. The stanza starts as a Cabal entrypoint in this
+sprint and gains the live kind-cluster assertions under Sprint 8.6, where the executable has
+a real cluster runner and service loops to drive.
 
 #### Deliverables
 
@@ -151,16 +149,22 @@ under Sprint 8.6, where the executable has a real cluster runner and service loo
 - `daemon-substrate-test test integration` delegates to
   `cabal test daemon-substrate-integration`.
 - the cluster is brought up via `hostbootstrap cluster up` (delegating inward to
-  `daemon-substrate-test cluster up`) before the live row coverage is executed.
+  `daemon-substrate-test cluster up`) before the live readiness gate is executed.
 
 #### Validation
 
 Validated with:
 
 - `cabal test daemon-substrate-integration`
+- Linux live run from the project image on Docker's `kind` network:
+  `cabal test daemon-substrate-integration --builddir=/tmp/daemon-substrate-cabal`
 
-The local integration stanza exits 0. Live kind-cluster integration coverage remains gated on
-Sprint 8.6 and Phase 7 Sprint 7.3. Target coverage for that live suite remains:
+The integration stanza now discovers the repo-local kubeconfig, requires the expected
+cohort-specific node count, waits for Harbor / Pulsar / MinIO StatefulSets and daemon
+Deployments to be rolled out, asserts expected pod readiness, checks the three retained PVCs
+are `Bound`, and verifies the edge-port record contains Pulsar, Pulsar admin, and MinIO
+ports. The broader workflow table remains the audit map for unit coverage plus live-smoke
+coverage:
 
 - worker / orchestrator fan-in / fan-out / result bridge
 - MinIO `Store` (blobs / manifests / pointers / CAS) cold + warm + eviction
@@ -221,12 +225,11 @@ Validated with:
 - `cabal test daemon-substrate-haskell-style`
 
 The existing style suite exits 0 locally. The shared `daemon-substrate-test test ...`
-delegate now executes Cabal for every test command; negative lint/doc-validator fixtures
-remain future hardening.
+delegate now executes Cabal for every test command.
 
-### Sprint 8.6: Live command and cluster interpreters [Active]
+### Sprint 8.6: Live command and cluster interpreters [Done]
 
-**Status**: Active
+**Status**: Done
 **Implementation**: `src/Daemon/Cluster/Runner.hs`, `src/Daemon/Test/CLI/Cluster.hs`,
 `src/Daemon/Test/CLI/Tests.hs`, `src/Daemon/Test/CLI/Service.hs`,
 `docker/linux-substrate.Dockerfile`
@@ -234,11 +237,6 @@ remain future hardening.
 `../documents/engineering/cluster_topology.md`,
 `../documents/engineering/hostbootstrap_integration.md`,
 `../documents/operations/cluster_bootstrap_runbook.md`, `system-components.md`
-
-**Remaining Work**:
-
-- Linux CPU hostbootstrap container validation and both-cohort kind-cluster `Ready`
-  validation remain open.
 
 #### Objective
 
@@ -257,7 +255,7 @@ cluster, and `service` runs the actual daemon role loop until terminated.
   an idempotent no-op, streams long-running build/load progress, and persists the selected
   edge port.
 - Linux CPU project image defaults to `daemon-substrate-test cluster up` when started as a
-  `hostbootstrap` service container.
+  `hostbootstrap` service container and remains resident after successful reconciliation.
 - Apple Silicon `service --role worker` is implemented as a long-running live worker loop.
   The host worker reads the persisted edge-port record, rewrites Pulsar / Pulsar admin /
   MinIO endpoints to localhost, connects through the managed port-forwards, and has been
@@ -306,8 +304,23 @@ Validated locally with:
   `WorkerNoMessage` over `pulsar://127.0.0.1:<pulsarPort>`, and a live smoke event
   (`live-smoke-1780601659`) returning `WorkerSuccess` on `test.response` with payload
   `live-smoke-payload`.
-
-Full live-cluster validation remains open until Linux CPU cohort validation lands.
+- Linux live validation with:
+  - `hostbootstrap doctor --spec hostbootstrap.dhall` on Ubuntu 24.04 amd64, detected as
+    `linux-gpu` and mapped by this repo to the CPU-flavored harness container
+  - `hostbootstrap build --spec hostbootstrap.dhall`
+  - `hostbootstrap cluster up --spec hostbootstrap.dhall`
+  - two consecutive `docker exec daemon-substrate daemon-substrate-test cluster down` /
+    `cluster up` preserved-state cycles
+  - `kubectl get pods -A` showing Harbor, Pulsar, MinIO, two orchestrator pods, and two
+    worker pods Running with zero restarts
+  - `kubectl get pvc,pv` showing Harbor, Pulsar, and MinIO PVCs bound to retained PVs
+  - `/workspace/.data/runtime/edge-port.json` preserving `9090`, `9091`, and `9092`
+  - `docker inspect daemon-substrate` showing the service container still running with
+    restart count `0`
+  - `daemon-substrate-test test all`
+  - `cabal test daemon-substrate-integration --builddir=/tmp/daemon-substrate-cabal` from
+    the project image on Docker's `kind` network, validating the live readiness gate against
+    the current workspace.
 
 ## Documentation Requirements
 
@@ -318,8 +331,9 @@ Full live-cluster validation remains open until Linux CPU cohort validation land
 - `../documents/reference/cli_surface.md` updates from "planned" to current-state declarative.
 
 **Development docs to create/update:**
-- `../documents/development/testing_strategy.md` updates every coverage row from
-  forward-looking to current-state declarative.
+- `../documents/development/testing_strategy.md` distinguishes the current automated gates
+  from the workflow coverage audit map and records which live readiness checks are enforced
+  by `daemon-substrate-integration`.
 
 **Cross-references to add:**
 - `system-components.md` flips `daemon-substrate-test`, `daemon-substrate-unit`,

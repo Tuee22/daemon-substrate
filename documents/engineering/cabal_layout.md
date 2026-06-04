@@ -92,9 +92,9 @@ Phase 1 has landed the buildable package scaffold:
 The `Daemon.Cluster.*` plan-generation modules are implemented, and Phase 8 Sprint 8.6 adds
 the live runner interpreters for kind / kubectl / helm / Docker, Pulsar admin, MinIO admin,
 edge-port persistence, managed Apple edge-port forwarding, and live worker / orchestrator
-service loops. Apple host-worker handoff and live request -> orchestrator -> host worker ->
-response handoff are validated. Full live-cluster closure remains active for Linux CPU
-validation.
+service loops. Apple host-worker handoff, live request -> orchestrator -> host worker ->
+response handoff, Linux hostbootstrap container bring-up, preserved-state Linux kind cycles,
+and the `daemon-substrate-integration` live readiness gate are validated.
 
 ## Package shape
 
@@ -298,13 +298,13 @@ test-suite daemon-substrate-haskell-style
 |-------|-------------------|
 | `daemon-substrate-unit` | pure logic: protobuf encode / decode, `WorkflowOwner` fold, `BootConfig` / `LiveConfig` / `LifecyclePolicy` decoders, cache eviction policies, `Store` semantics over `FilesystemMinIO`, `Consumer` dedup over `FilesystemPulsar`, reconciler tick over filesystem backends |
 | `daemon-substrate-lifecycle` | daemon spawned as a real process; SIGHUP / SIGTERM / SIGINT exercised; `/readyz` polled; `LiveConfig` reload validated. No cluster needed. |
-| `daemon-substrate-integration` | current local placeholder gate; target end-to-end suite runs with a real kind cluster brought up by `hostbootstrap cluster up` (delegating inward to `daemon-substrate-test cluster up`) |
+| `daemon-substrate-integration` | live readiness suite; requires a real kind cluster brought up by `hostbootstrap cluster up` (delegating inward to `daemon-substrate-test cluster up`) and checks node topology, dependency rollouts, daemon workload readiness, retained PVCs, and edge-port state |
 | `daemon-substrate-haskell-style` | `ormolu` and `hlint` gates run against `src/`, plus the doc validator |
 
-The target integration suite is the one that depends on a running cluster. It is invoked
-through `daemon-substrate-test test integration`; the current command delegates directly to
-`cabal test daemon-substrate-integration`, and the live cluster preflight lands with the
-remaining Phase 8 Sprint 8.6 workflow coverage.
+The integration suite is the one that depends on a running cluster. It is invoked through
+`daemon-substrate-test test integration`; the command delegates directly to
+`cabal test daemon-substrate-integration`, which discovers the repo-local kubeconfig and
+fails fast if the live readiness gate is not satisfied.
 
 ## Why no sublibrary split
 

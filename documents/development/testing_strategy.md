@@ -20,17 +20,18 @@
 - On both cohorts the operator entrypoint is `hostbootstrap cluster up`; the
   `daemon-substrate-test test ...` commands run inside the resulting environment.
 
-Current implementation note: Phase 8 Sprints 8.1 through 8.5 implement the executable parser,
-help surface, Cabal test delegation, and the four local test stanzas. Phase 8 Sprint 8.6
-implements the live cluster runner, deployable dependency charts, PVC-backed Apple kind
-state, and live service loops. The current `daemon-substrate-integration` stanza is still a
-local placeholder gate; rows 3-36 below describe the live coverage that must land before
-Phase 8 can close. Apple Silicon live validation has covered cluster bring-up, PVC-backed
-state preservation, native Pulsar Failover leadership for the reconciler, and live
-Pulsar/MinIO admin interactions. Apple host-worker edge-port handoff and a live
-request -> orchestrator -> host worker -> response smoke handoff are validated. The remaining
-live coverage row is Linux CPU cohort validation, tracked by Phase 8 phase-level remaining
-work and Phase 7 Sprint 7.3.
+Current implementation note: Phase 8 implements the executable parser, help surface, Cabal
+test delegation, four test stanzas, live cluster runner, deployable dependency charts,
+PVC-backed kind state, live service loops, and the integration readiness gate. Apple Silicon
+live validation covers cluster bring-up, PVC-backed state preservation, native Pulsar
+Failover leadership for the reconciler, live Pulsar/MinIO admin interactions, host-worker
+edge-port handoff, and a live request -> orchestrator -> host worker -> response smoke
+handoff. Linux live validation covers hostbootstrap container bring-up, two preserved-state
+kind cycles, retained PV reattachment, worker/orchestrator readiness, edge-port
+preservation, and the `daemon-substrate-integration` live readiness gate. Rows 1-36 below
+are the workflow audit map tying automated unit coverage, live readiness checks, and
+manual live-smoke evidence to consumer-representative behavior; they are not each a
+separate integration-test case today.
 
 ## Command surface
 
@@ -47,8 +48,11 @@ expose a browser- or HTTP-API-driven surface, so e2e is out of scope until a pha
 
 ## Workflow coverage table
 
-The integration suite must cover every row below. Rows 1–2 are also touched by the
-`lifecycle` stanza for signal-handling coverage without a cluster.
+The coverage table below is the audit map for substrate behavior. Rows 1-2 are directly
+covered by lifecycle/unit gates without a cluster. Rows 3-36 are covered by a mix of unit
+tests, live readiness checks, and documented live-smoke validation; future hardening can
+split more rows into dedicated integration-test cases without changing the supported
+architecture.
 
 | # | Workflow | Validates | jitML uses? | infernix uses? |
 |---|----------|-----------|-------------|-----------------|
@@ -170,9 +174,20 @@ Covers:
 
 ### `test integration`
 
-The `daemon-substrate-integration` cabal stanza. The current stanza is a local placeholder
-gate delegated by `daemon-substrate-test test integration`. The target live suite requires a
-running kind cluster brought up by `hostbootstrap cluster up` and covers rows 3-36 above.
+The `daemon-substrate-integration` cabal stanza. It requires a running kind cluster brought
+up by `hostbootstrap cluster up` and discovers the repo-local kubeconfig
+(`./.build/daemon-substrate.kubeconfig` on Apple Silicon or
+`./.data/runtime/daemon-substrate.kubeconfig` on Linux). The current live gate checks:
+
+- cohort-specific kind node count and node readiness
+- Harbor, Pulsar, and MinIO StatefulSet rollouts
+- orchestrator Deployment rollout and Linux worker Deployment rollout
+- expected app pod readiness
+- Harbor, Pulsar, and MinIO PVCs bound to retained PVs
+- edge-port record fields for Pulsar, Pulsar admin, and MinIO
+
+Broader workflow rows remain represented by the unit suites and the live-smoke validation
+called out in the phase plan.
 
 ### `test lint`
 
@@ -189,8 +204,7 @@ first failure.
 
 Per [`../../DEVELOPMENT_PLAN/development_plan_standards.md` § Q](../../DEVELOPMENT_PLAN/development_plan_standards.md),
 both cohorts (Apple Silicon, Linux CPU) must close before a phase that touches the harness can
-move to `Done`. Sprint validation language distinguishes local-cohort closure from
-counterpart-cohort pending status.
+move to `Done`. Phase 8 has closed both cohort gates.
 
 On both cohorts the operator entrypoint is `hostbootstrap cluster up`; the `daemon-substrate-test
 test ...` commands run inside the resulting environment (`./.build/daemon-substrate-test ...`

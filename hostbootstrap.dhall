@@ -12,6 +12,18 @@ H.config
               ]
             }
         )
+    , H.entry H.Substrate.LinuxGpu
+        ( H.Model.Container
+            H.Container::{
+            , dockerfile = "docker/linux-substrate.Dockerfile"
+            , flavor = H.Flavor.Cpu
+            , service = True
+            , mounts =
+              [ H.Mount::{ host = "./.data", container = "/workspace/.data" }
+              , H.Mount::{ host = "/var/run/docker.sock", container = "/var/run/docker.sock" }
+              ]
+            }
+        )
     , H.entry H.Substrate.AppleSilicon
         ( H.Model.HostDaemon
             H.HostDaemon::{
@@ -25,4 +37,3 @@ H.config
         )
     ]
   }
-

@@ -12,21 +12,17 @@
 
 ## Phase Status
 
-**Status**: Active
-**Implementation**: Sprints 7.1 and 7.2 are implemented. Sprint 7.3 has validated the Apple
-Silicon hostbootstrap `doctor`, `build`, `cluster up`, LaunchDaemon inspection, and
-`cluster down` lifecycle. The Apple Silicon inner kind cluster now completes a preserved-state
-`down` / `up` cycle and an in-place `cluster up` with Harbor / Pulsar / MinIO PVCs bound to
-repo-local data, the orchestrator Deployment rolled out, and named native Pulsar Failover
-leadership validated for the reconciler. The Linux CPU hostbootstrap lifecycle and the full
-`Ready` kind-cluster gate remain open because Linux CPU cohort validation has not run from
-this Apple Silicon environment.
-
-**Remaining Work**:
-
-- Sprint 7.3: Linux CPU `hostbootstrap cluster up` validation.
-- Sprint 7.3: full `Ready` cluster validation on both cohorts after Linux CPU live validation
-  runs.
+**Status**: Done
+**Implementation**: Sprints 7.1, 7.2, and 7.3 are implemented and validated. Apple Silicon
+hostbootstrap `doctor`, `build`, `cluster up`, LaunchDaemon inspection, and `cluster down`
+lifecycle are validated. Linux hostbootstrap `doctor`, `build`, and `cluster up` are
+validated on an Ubuntu 24.04 amd64 host that hostbootstrap detects as `linux-gpu`; this
+repository maps that detected substrate to the CPU-flavored harness container because the
+test harness intentionally has no GPU cohort. The Linux service container runs `cluster up`
+to completion, stays resident, and reaches a `Ready` kind cluster with Harbor / Pulsar /
+MinIO PVCs bound, orchestrator and worker Deployments rolled out, and the edge-port record
+preserved. Two consecutive preserved-state Linux `cluster down` / `cluster up` cycles
+reattach the retained PVs and preserve edge ports.
 
 ## Phase Objective
 
@@ -63,6 +59,9 @@ and injected by `hostbootstrap` as `H`; the file has no import line.
   - `H.Substrate.LinuxCpu` → `H.Model.Container` with `dockerfile = "docker/linux-substrate.Dockerfile"`,
     `service = True`, and mounts for `./.data` (durable cluster state) and `/var/run/docker.sock`
     (so the container can drive its own `kind`)
+  - `H.Substrate.LinuxGpu` → the same CPU-flavored `H.Model.Container`, for hosts where
+    hostbootstrap detects NVIDIA runtime support even though this repository has no GPU
+    cohort
   - `H.Substrate.AppleSilicon` → `H.Model.HostDaemon` with the `cabal install` build command
     targeting `exe:daemon-substrate-test`, host prereqs (`H.HostReqs::{ ghc = True }`), and
     the `daemon` command `./.build/daemon-substrate-test service --role worker --config dhall/worker.dhall`
@@ -71,11 +70,11 @@ and injected by `hostbootstrap` as `H`; the file has no import line.
 
 #### Validation
 
-Validated with a repo-local static shape check because `hostbootstrap` is not installed in
-this environment. The check verifies the injected-`H` Dhall has no imports and declares the
-Linux CPU `Container` model, Apple Silicon `HostDaemon` model, durable `.data` and
-Docker-socket mounts, host GHC prereq, build command, and worker daemon command. Live
-`hostbootstrap doctor` validation moves to Sprint 7.3.
+Validated with repo-local static shape checks and live `hostbootstrap doctor` in Sprint 7.3.
+The checks verify the injected-`H` Dhall has no imports and declares the Linux CPU
+`Container` model, the Linux GPU-detected CPU harness compatibility entry, Apple Silicon
+`HostDaemon` model, durable `.data` and Docker-socket mounts, host GHC prereq, build command,
+and worker daemon command.
 
 ### Sprint 7.2: Thin project Dockerfile [Done]
 
@@ -98,38 +97,27 @@ formatters, warm Haskell store) lives in the base.
   - `FROM ${BASE_IMAGE}`
   - copies the project source and runs
     `cabal install --installdir /usr/local/bin --install-method=copy --overwrite-policy=always exe:daemon-substrate-test`
-  - declares `CMD ["daemon-substrate-test", "cluster", "up"]` so the Linux CPU
-    `Container` model's long-running service starts the inner reconciler by default
+  - declares `CMD ["/bin/sh", "-c", "daemon-substrate-test cluster up && sleep infinity"]`
+    so the Linux CPU `Container` model's long-running service starts the inner reconciler by
+    default and remains resident after successful reconciliation
   - no toolchain installation, no `RUN apt`, no `RUN curl ... ghcup`
 
 #### Validation
 
 Validated with a repo-local static boundary check: the Dockerfile starts with `ARG BASE_IMAGE`
 and `FROM ${BASE_IMAGE}`, runs only the project `cabal install ... exe:daemon-substrate-test`
-step, declares the `daemon-substrate-test cluster up` service `CMD`, and contains no
-package-manager, `curl`, or `ghcup` toolchain installation. Live `hostbootstrap build`
-validation is tracked in Sprint 7.3.
+step, declares the `daemon-substrate-test cluster up && sleep infinity` service `CMD`, and
+contains no package-manager, `curl`, or `ghcup` toolchain installation. Live
+`hostbootstrap build` validation is tracked in Sprint 7.3.
 
-### Sprint 7.3: End-to-end bring-up [Active]
+### Sprint 7.3: End-to-end bring-up [Done]
 
-**Status**: Active
+**Status**: Done
 **Implementation**: `hostbootstrap.dhall`, `docker/linux-substrate.Dockerfile`,
 `.build/daemon-substrate-test`, `src/Daemon/Test/CLI/Service.hs`
 **Docs to update**: `../documents/operations/cluster_bootstrap_runbook.md`,
 `../documents/operations/apple_silicon_runbook.md`,
 `../documents/operations/linux_cpu_runbook.md`
-
-**Remaining Work**:
-
-- Linux CPU cohort validation is not run in the current Apple Silicon environment.
-- Full `Ready` kind-cluster validation is gated on Linux CPU validation. Live Apple Silicon
-  runs now bring up deployable Harbor / Pulsar / MinIO dependencies, live admin
-  interpreters, PVC-backed state, orchestrator pods, named native Pulsar Failover leadership
-  for the reconciler, managed edge-port forwarding, Apple host-worker handoff, and live
-  request -> orchestrator -> host worker -> response workflow handoff.
-- A single Apple Silicon `down` / `up` preserved-state cycle is validated. The full closure
-  gate still requires the same preservation behavior on Linux CPU and a complete `Ready`
-  result from the Linux CPU cohort.
 
 #### Objective
 
@@ -157,13 +145,22 @@ the lifecycle preserves `./.data/` across cycles.
   `/Library/LaunchDaemons/com.hostbootstrap.daemon-substrate.plist`, reported the
   LaunchDaemon as `state = running` with the expected `service --role worker --config
   dhall/worker.dhall` arguments, and removed the LaunchDaemon on `cluster down`.
-- Linux CPU cohort: `hostbootstrap cluster up` builds the thin project image, runs the
-  container long-running with the declared mounts, and the container's
-  `daemon-substrate-test cluster up` reaches `Ready`. This validation remains open until a
-  Linux CPU cohort is available.
-- Full cluster readiness: still open. A passing gate requires both cohorts to reach `Ready`
-  and two consecutive `down` / `up` cycles to produce identical cluster state on the second
-  `up` (PV reattachment, edge port preserved).
+- Linux cohort: `hostbootstrap doctor --spec hostbootstrap.dhall` reports `linux-gpu`
+  (`amd64`) on the validated host, with Ubuntu 24.04, passwordless sudo, Docker daemon
+  access, and NVIDIA runtime checks passing. `hostbootstrap.dhall` maps that detected
+  substrate to the same CPU-flavored Container model used for Linux CPU validation.
+  `hostbootstrap build --spec hostbootstrap.dhall` builds
+  `daemon-substrate:linux-gpu-amd64` from the thin project Dockerfile. `hostbootstrap cluster
+  up --spec hostbootstrap.dhall` starts the long-running service container, runs
+  `daemon-substrate-test cluster up`, attaches the container to Docker's `kind` network,
+  exports the internal kind kubeconfig, waits for node readiness, deploys Harbor / Pulsar /
+  MinIO, rolls out the orchestrator and worker Deployments, and persists edge ports
+  `9090`/`9091`/`9092`.
+- Full cluster readiness: closed for the phase. Apple Silicon and Linux both reach `Ready`.
+  Linux validation included two consecutive inner `daemon-substrate-test cluster down` /
+  `cluster up` cycles against the same `.data` mount; both re-created kind, reattached the
+  retained PVs, rolled out dependencies and daemon workloads, and preserved the edge-port
+  record at base port `9090`.
 - Apple Silicon inner kind preserved-state validation has been exercised with:
   - `daemon-substrate-test cluster down`
   - `daemon-substrate-test cluster up`

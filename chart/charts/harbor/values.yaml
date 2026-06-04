@@ -1,4 +1,4 @@
 replicas: 1
 image:
-  repository: registry
+  repository: mirror.gcr.io/library/registry
   tag: "2"

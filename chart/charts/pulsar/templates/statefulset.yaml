@@ -19,9 +19,29 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: {{ .Release.Name }}-pulsar-data
+      initContainers:
+        - name: data-permissions
+          image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+          command:
+            - /bin/sh
+            - -c
+          args:
+            - |
+              mkdir -p /pulsar/data
+              chown -R 10000:0 /pulsar/data
+              chmod -R g+rwX /pulsar/data
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+          volumeMounts:
+            - name: data
+              mountPath: /pulsar/data
       containers:
         - name: pulsar
           image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+          securityContext:
+            runAsUser: 10000
+            runAsGroup: 0
           command:
             - /bin/sh
             - -c

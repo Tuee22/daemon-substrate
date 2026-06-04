@@ -18,12 +18,13 @@
 - Apple Silicon → `HostDaemon` model (host-native worker wrapped in a system-scope
   LaunchDaemon).
 - Linux CPU → `Container` model (`service = True`, with `.data` and Docker-socket bind
-  mounts).
+  mounts). GPU-capable Linux hosts that hostbootstrap detects as `linux-gpu` use the same
+  CPU-flavored harness container; this is detection compatibility, not a GPU cohort.
 - `hostbootstrap cluster up` is the outer operator entrypoint on both cohorts. On Linux CPU
-  the service container defaults to `daemon-substrate-test cluster up`; on Apple Silicon the
-  HostDaemon starts the host-native worker service. The Apple inner cluster reconciler is
-  `daemon-substrate-test cluster up`; it currently brings up the deployable kind topology,
-  while full `Ready` validation remains gated on the active live-cluster sprint.
+  the service container defaults to `daemon-substrate-test cluster up && sleep infinity`; on
+  Apple Silicon the HostDaemon starts the host-native worker service. The inner cluster
+  reconciler is `daemon-substrate-test cluster up`, and both cohorts reach the supported
+  `Ready` kind topology.
 
 ## Why hostbootstrap
 
@@ -73,6 +74,7 @@ unchanged: `src/Daemon/*` never branches on substrate.
 |--------|--------------------------|---------------------|------------------|
 | Apple Silicon | `H.Substrate.AppleSilicon` | `H.Model.HostDaemon` | `./.build/daemon-substrate-test service --role worker --config dhall/worker.dhall` as a system-scope LaunchDaemon |
 | Linux CPU | `H.Substrate.LinuxCpu` | `H.Model.Container` (`service = True`) | `daemon-substrate-test cluster up` inside the project container, which then reconciles the in-cluster kind topology |
+| GPU-capable Linux host, CPU harness | `H.Substrate.LinuxGpu` | `H.Model.Container` (`service = True`, `flavor = H.Flavor.Cpu`) | same CPU harness container; validates daemon-substrate on hosts whose Docker runtime exposes NVIDIA support |
 
 There is intentionally no Linux GPU cohort in the harness. Consumers (`infernix`, `jitML`)
 carry their own GPU cohort obligations against their own model matrices.
@@ -97,6 +99,18 @@ H.config
               ]
             }
         )
+    , H.entry H.Substrate.LinuxGpu
+        ( H.Model.Container
+            H.Container::{
+            , dockerfile = "docker/linux-substrate.Dockerfile"
+            , flavor = H.Flavor.Cpu
+            , service = True
+            , mounts =
+              [ H.Mount::{ host = "./.data", container = "/workspace/.data" }
+              , H.Mount::{ host = "/var/run/docker.sock", container = "/var/run/docker.sock" }
+              ]
+            }
+        )
     , H.entry H.Substrate.AppleSilicon
         ( H.Model.HostDaemon
             H.HostDaemon::{
@@ -112,10 +126,9 @@ H.config
   }
 ```
 
-The root `hostbootstrap.dhall` implements this shape. It has been statically validated in the
-repository; live `hostbootstrap doctor` / `cluster up` validation is tracked by Phase 7 Sprint
-7.3 because it requires the Phase 8 `daemon-substrate-test` executable and a hostbootstrap
-cohort environment.
+The root `hostbootstrap.dhall` implements this shape. Live `hostbootstrap doctor`, `build`,
+and `cluster up` are validated for Apple Silicon and for a Linux host detected as
+`linux-gpu` and mapped to the CPU-flavored harness container.
 
 ## Base image and toolchain
 
@@ -140,14 +153,14 @@ FROM ${BASE_IMAGE}
 WORKDIR /workspace
 COPY . .
 RUN cabal install --installdir /usr/local/bin --install-method=copy --overwrite-policy=always exe:daemon-substrate-test
-CMD ["daemon-substrate-test", "cluster", "up"]
+CMD ["/bin/sh", "-c", "daemon-substrate-test cluster up && sleep infinity"]
 ```
 
 `hostbootstrap` resolves `BASE_IMAGE` to the correct per-substrate tag and passes it via
 `docker build --build-arg`. The Dockerfile carries no toolchain installation logic — every
-heavy layer is in the base. The Dockerfile is present and validated for this boundary; the
-Linux CPU image-build / service-container lifecycle remains open until a Linux CPU cohort is
-available.
+heavy layer is in the base. The shell-form `CMD` runs the inner cluster reconciler and then
+keeps the service container resident so hostbootstrap's restart policy does not repeatedly
+rerun a completed `cluster up`.
 
 ## Operator entrypoints (both cohorts)
 
@@ -173,8 +186,10 @@ Docker Engine / Compose verification and install).
 
 - **Linux CPU**: builds the project container `FROM` the base; runs it with `service = True`,
   the `.data` and `docker.sock` mounts; the container starts `daemon-substrate-test cluster
-  up`, which reconciles the kind cluster + Harbor / Pulsar / MinIO / orchestrator (and the
-  worker Deployment) inside.
+  up`, attaches itself to Docker's `kind` network, exports kind's internal kubeconfig, and
+  reconciles the kind cluster + Harbor / Pulsar / MinIO / orchestrator (and the worker
+  Deployment) inside. After a successful reconciliation, the container sleeps indefinitely
+  and remains available for `hostbootstrap run` / `docker exec` diagnostics.
 - **Apple Silicon**: builds `./.build/daemon-substrate-test` natively (the host already has
   GHC via ghcup); installs the LaunchDaemon that runs `daemon-substrate-test service --role
   worker --config dhall/worker.dhall`. The Apple outer lifecycle is validated locally:
@@ -186,8 +201,8 @@ Docker Engine / Compose verification and install).
   bind PVC-backed state, roll out the orchestrator Deployment, and preserve MinIO / Pulsar
   data across `cluster down && cluster up`. The inner runner starts managed edge-port
   forwards, and the Apple host worker has completed a live request -> orchestrator -> host
-  worker -> response smoke handoff through those forwarded endpoints. Full `Ready`
-  validation remains active until Linux CPU validation closes.
+  worker -> response smoke handoff through those forwarded endpoints. Linux validation closes
+  the matching `Ready` gate with the in-cluster worker Deployment.
 
 The boundary: above the seam (substrate detection, prereqs, container / daemon lifecycle,
 LaunchDaemon installation) is `hostbootstrap`. Below the seam (kind, Harbor, Pulsar, MinIO,
