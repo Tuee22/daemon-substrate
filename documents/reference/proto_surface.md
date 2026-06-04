@@ -2,7 +2,7 @@
 
 **Status**: Authoritative source
 **Supersedes**: N/A
-**Referenced by**: [../README.md](../README.md), [../architecture/library_consumption_model.md](../architecture/library_consumption_model.md), [../architecture/lifecycle_policy.md](../architecture/lifecycle_policy.md), [../architecture/pulsar_minio_ssot.md](../architecture/pulsar_minio_ssot.md), [../engineering/pulsar_topics.md](../engineering/pulsar_topics.md), [../engineering/orchestration_topologies.md](../engineering/orchestration_topologies.md), [../engineering/batching.md](../engineering/batching.md), [../engineering/mock_engine.md](../engineering/mock_engine.md)
+**Referenced by**: [../README.md](../README.md), [../architecture/library_consumption_model.md](../architecture/library_consumption_model.md), [../architecture/lifecycle_policy.md](../architecture/lifecycle_policy.md), [../architecture/pulsar_minio_ssot.md](../architecture/pulsar_minio_ssot.md), [../engineering/pulsar_topics.md](../engineering/pulsar_topics.md), [../engineering/pulsar_native_client.md](../engineering/pulsar_native_client.md), [../engineering/orchestration_topologies.md](../engineering/orchestration_topologies.md), [../engineering/batching.md](../engineering/batching.md), [../engineering/mock_engine.md](../engineering/mock_engine.md)
 
 > **Purpose**: Authoritative inventory of every `.proto` file in `proto/`, the messages each
 > defines, and the boundary between substrate-owned envelopes and consumer-owned (or
@@ -18,8 +18,10 @@
   `WorkflowEvent.inline_bytes` or referenced via `WorkflowEvent.object_ref`) may use whatever
   encoding the consumer chooses — substrate treats them as opaque bytes and routes by
   `payload_type` URL prefix.
-- Payloads larger than `BootConfig.blobInlineThresholdBytes` MUST flow as `object_ref`
-  (substrate enforces the switch at publish time); see
+- The producer chooses the `inline_bytes` vs `object_ref` branch by the payload's nature
+  (static binary artifacts ride as `object_ref` at any size); the substrate stays payload-blind
+  and enforces only a max inline-payload size (`BootConfig.maxInlinePayloadBytes`), rejecting
+  over-max `inline_bytes` at publish time. See
   [../architecture/pulsar_minio_ssot.md](../architecture/pulsar_minio_ssot.md).
 - Application code uses hand-written `Daemon.Wire.*` ADTs that wrap the generated
   `Daemon.Proto.*` records; only the publish / subscribe boundary touches the generated types.
@@ -34,13 +36,24 @@ proto/
 │   ├── orchestrator_worker.proto # OrchestratorToWorker, WorkerResult
 │   ├── lifecycle.proto           # LifecyclePhase, ReadinessReport (for /readyz)
 │   └── audit.proto               # AuditEvent, ResourceRef, ReconcileAction (for runReconciler)
-└── daemon_substrate_test/
-    └── mock.proto                # MockRequest, MockBatch, MockResult, MockPayload
+├── daemon_substrate_test/
+│   └── mock.proto                # MockRequest, MockBatch, MockResult, MockPayload
+└── PulsarApi.proto               # vendored Apache Pulsar wire-protocol schema (Phase 2)
 ```
 
 The substrate library carries everything under `daemon_substrate/`. The test harness owns
 `daemon_substrate_test/`. Consumers carry their own payload protos in their own repositories;
 those protos are wrapped by the substrate-owned envelopes at Pulsar publish time.
+
+`proto/PulsarApi.proto` is **vendored**, not authored here: it is Apache Pulsar's own
+binary-protocol schema (`BaseCommand` and its sub-commands — `CommandConnect`, `CommandProducer`,
+`CommandSend`, `CommandMessage`, `CommandAck`, `CommandFlow`, `CommandLookupTopic`, `CommandSeek`,
+`CommandPing`/`CommandPong`, …). It lands in Phase 2 alongside `Daemon.Pulsar.Native`, is the
+*wire transport* for Pulsar rather than a substrate-owned application envelope, and is therefore
+held outside the `daemon_substrate/` tree. The substrate-owned envelopes in `daemon_substrate/`
+still land in Phase 4. Both are compiled by the same `proto-lens-protoc` step (see
+[Generated Haskell](#generated-haskell) and
+[../engineering/pulsar_native_client.md](../engineering/pulsar_native_client.md)).
 
 ## Substrate-owned envelopes
 
@@ -58,8 +71,8 @@ message WorkflowEvent {
   WorkflowKind workflow_kind = 4;  // operational classification; see enum below
   string       payload_type  = 5;  // fully-qualified protobuf type URL of inline_bytes (when set)
   oneof payload {
-    bytes     inline_bytes   = 6;  // payload at-or-below BootConfig.blobInlineThresholdBytes
-    ObjectRef object_ref     = 7;  // payload above the threshold; substrate enforces the switch
+    bytes     inline_bytes   = 6;  // producer-inlined payload; capped at BootConfig.maxInlinePayloadBytes
+    ObjectRef object_ref     = 7;  // producer-externalized payload (MinIO); chosen by payload nature
   }
 }
 
@@ -88,8 +101,9 @@ the substrate batcher honors it: requests near their deadline force-flush their 
 requests past their deadline are dropped before dispatch. See
 [../engineering/batching.md](../engineering/batching.md).
 
-The `payload` oneof keeps Pulsar payloads bounded: bytes above the configured threshold ride
-in MinIO as `ObjectRef`, leaving the Pulsar message message-shaped. Receivers can opt into
+The `payload` oneof keeps Pulsar payloads bounded: static binary artifacts ride in MinIO as
+`ObjectRef` by nature (the producer's choice), leaving the Pulsar message message-shaped, while
+a `BootConfig.maxInlinePayloadBytes` guard rail caps whatever is inlined. Receivers can opt into
 transparent materialization via `Daemon.MinIO.Store.readBlob`.
 
 ### `daemon_substrate/control.proto`
@@ -261,6 +275,8 @@ Protobuf code generation produces modules under `src/Daemon/Proto/`:
 - `Daemon.Proto.Lifecycle`
 - `Daemon.Proto.Audit`
 - `Daemon.Proto.Test.Mock` (test-harness only)
+- `Daemon.Proto.PulsarApi` (vendored Pulsar wire protocol; used only by `Daemon.Pulsar.Native`,
+  never exposed to application code)
 
 The generator is `proto-lens-setup`-driven; the Cabal stanza for the library declares both
 `build-tool-depends: proto-lens-protoc` and the appropriate `autogen-modules`. See

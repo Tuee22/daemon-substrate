@@ -136,6 +136,11 @@ Each phase document must contain sprint-level sections in this format:
 Additional sections such as `Module Surface`, `Typeclass Contract`, `Protobuf Schema`, or
 `Lifecycle Hooks` are encouraged when they clarify closure criteria.
 
+Sprint identifiers are normally `X.Y`. A decimal-insert form (`X.Y.Z`, e.g. `Sprint 5.1.5`)
+is permitted when later scoping splits an existing sprint and renumbering the trailing
+sprints would churn more cross-references than it is worth; it carries the same section
+requirements as any other sprint.
+
 ### H. Documentation Requirements Section
 
 Every phase document ends with a `## Documentation Requirements` section.
@@ -298,6 +303,17 @@ record into the library entry points.
 - Tests pass typed `BootConfig` fixtures rather than constructing one from environment state.
 - The doctrine matches the consumer projects' configuration doctrine; this section exists to
   state that the library does not loosen it.
+
+**Pulsar transport exception.** Every other external integration (MinIO, Harbor, Kubectl,
+`SubprocessEngine`) shells out through the single typed `Subprocess` boundary `Daemon.Sub`.
+Pulsar does not: `Daemon.Pulsar.Native` speaks the native binary protocol over TCP in-process,
+and `Daemon.Pulsar.Admin.Http` calls the admin REST API in-process. Pulsar is the substrate's
+deadline-sensitive hot path, so a subprocess or WebSocket-proxy hop on that path is precisely
+the latency the substrate cannot afford. The in-process client still obeys the rules above —
+broker service URL, admin URL, TLS / auth, pool size, and timeouts are typed config fields read
+from `BootConfig` (and hot-tunable knobs from `LiveConfig`), never the environment or a
+`$PATH`-resolved command. See
+[`../documents/engineering/pulsar_native_client.md`](../documents/engineering/pulsar_native_client.md).
 
 ### N. Haskell Quality Gate Contract
 

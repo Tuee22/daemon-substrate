@@ -2,7 +2,7 @@
 
 **Status**: Authoritative source
 **Supersedes**: N/A
-**Referenced by**: [../README.md](../README.md), [../../README.md](../../README.md), [daemon_roles.md](daemon_roles.md), [pulsar_minio_ssot.md](pulsar_minio_ssot.md), [lifecycle_policy.md](lifecycle_policy.md), [../engineering/cabal_layout.md](../engineering/cabal_layout.md), [../engineering/orchestration_topologies.md](../engineering/orchestration_topologies.md), [../engineering/batching.md](../engineering/batching.md), [../reference/proto_surface.md](../reference/proto_surface.md), [../../DEVELOPMENT_PLAN/development_plan_standards.md](../../DEVELOPMENT_PLAN/development_plan_standards.md)
+**Referenced by**: [../README.md](../README.md), [../../README.md](../../README.md), [daemon_roles.md](daemon_roles.md), [pulsar_minio_ssot.md](pulsar_minio_ssot.md), [lifecycle_policy.md](lifecycle_policy.md), [../engineering/cabal_layout.md](../engineering/cabal_layout.md), [../engineering/pulsar_native_client.md](../engineering/pulsar_native_client.md), [../engineering/orchestration_topologies.md](../engineering/orchestration_topologies.md), [../engineering/batching.md](../engineering/batching.md), [../reference/proto_surface.md](../reference/proto_surface.md), [../../DEVELOPMENT_PLAN/development_plan_standards.md](../../DEVELOPMENT_PLAN/development_plan_standards.md)
 
 > **Purpose**: Define how downstream Haskell projects (`infernix`, `jitML`, future consumers)
 > depend on, configure, and extend `daemon-substrate`, and what the library does versus what
@@ -56,9 +56,11 @@ The library exposes these public modules (names finalized in the relevant phase)
 
 | Module | Purpose | Owner |
 |--------|---------|-------|
-| `Daemon.Sub` | typed `Subprocess` boundary; every shell-out goes through here | library |
+| `Daemon.Sub` | typed `Subprocess` boundary; every shell-out (MinIO / Harbor / Kubectl / `SubprocessEngine`) goes through here — Pulsar is the in-process exception | library |
 | `Daemon.Pulsar` | `HasPulsar` typeclass and `SubscriptionMode` (`Shared`, `KeyShared`, `Exclusive`, `Failover`) | library |
+| `Daemon.Pulsar.Native` | production in-process `HasPulsar` impl over Pulsar's native binary protocol (TCP); not a subprocess | library |
 | `Daemon.Pulsar.Admin` | typed Pulsar admin operations (create / delete / terminate / set retention / export / import) | library |
+| `Daemon.Pulsar.Admin.Http` | production in-process admin impl over the broker admin REST API | library |
 | `Daemon.MinIO` | `HasMinIO` typeclass with CAS / ETag semantics | library |
 | `Daemon.MinIO.Cache` | non-authoritative ephemeral cache wrapper | library |
 | `Daemon.MinIO.Store` | generic content-addressed store (blobs / manifests / pointers + CAS) | library |
@@ -87,7 +89,8 @@ The library exposes these public modules (names finalized in the relevant phase)
 ## What the library owns
 
 - Pulsar, MinIO, Harbor, and Kubectl transport / cluster-I/O plumbing (the typeclasses, the
-  substrate-default subscription semantics, the ETag handling, the typed subprocess seam).
+  substrate-default subscription semantics, the ETag handling, the typed subprocess seam for
+  MinIO / Harbor / Kubectl, and the in-process native-protocol / admin-REST Pulsar client).
 - The five base loops (`runWorker`, `runOrchestrator`, `runBridge`, `runFanInBootstrap`,
   `runReconciler`).
 - The `BootConfig role app` / `LiveConfig` / `LifecyclePolicy` configuration shapes, Dhall
@@ -116,9 +119,11 @@ The library exposes these public modules (names finalized in the relevant phase)
   (hard-deadline preemption + WFQ + optional dwell), `BatchingPolicy` / `SchedulerPolicy`
   Dhall surfaces in `LiveConfig`, and the `BatchingHooks` consumer extension. See
   [../engineering/batching.md](../engineering/batching.md).
-- **Large-blob handoff convention**: payloads above `BootConfig.blobInlineThresholdBytes`
-  flow as `ObjectRef` in `WorkflowEvent.payload`, transparently materialized via
-  `Daemon.MinIO.Store.readBlob` on receive when the consumer opts in.
+- **Large-blob handoff convention**: payloads are placed by nature — the consumer publishes
+  static binary artifacts as `ObjectRef` in `WorkflowEvent.payload` (at any size), and the
+  substrate enforces only a `BootConfig.maxInlinePayloadBytes` guard rail on what is inlined.
+  `ObjectRef` payloads are transparently materialized via `Daemon.MinIO.Store.readBlob` on
+  receive when the consumer opts in.
 
 ## What the consumer owns
 
@@ -144,6 +149,10 @@ The library exposes these public modules (names finalized in the relevant phase)
   CBOR, raw tensor buffers, etc.). Each consumer namespaces its `payload_type` URLs under its
   own root (`type.infernix.io/inference/v1/...`, `type.jitml.io/training/v1/...`) and
   registers handlers with `Daemon.Consumer.HandlerRouter` keyed by URL prefix.
+- The **placement decision**: which payloads ride inline vs. as `ObjectRef`. Because the
+  substrate is payload-blind, the consumer (not the substrate) decides by payload nature —
+  static binary artifacts go to MinIO as `ObjectRef`; message-shaped state stays inline under
+  the `maxInlinePayloadBytes` guard rail.
 - **The `BatchingHooks` combinability predicate** (`canCombine` + `bucketKey`) — the only
   payload-aware extension into substrate's batcher. Substrate cannot inspect payloads; the
   consumer's `bucketKey` choice is what makes scheduler fairness meaningful for the workload.

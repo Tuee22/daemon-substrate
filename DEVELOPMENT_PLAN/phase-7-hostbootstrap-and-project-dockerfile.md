@@ -52,7 +52,7 @@ and injected by `hostbootstrap` as `H`; the file has no import line.
     (so the container can drive its own `kind`)
   - `H.Substrate.AppleSilicon` → `H.Model.HostDaemon` with the `cabal install` build command
     targeting `exe:daemon-substrate-test`, host prereqs (`H.HostReqs::{ ghc = True }`), and
-    the `daemon` command `.build/daemon-substrate-test service --role worker --config dhall/worker.dhall`
+    the `daemon` command `./.build/daemon-substrate-test service --role worker --config dhall/worker.dhall`
 - shape conforms to the canonical example in
   `../documents/engineering/hostbootstrap_integration.md`
 

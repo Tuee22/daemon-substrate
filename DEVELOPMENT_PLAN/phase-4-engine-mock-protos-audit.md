@@ -40,8 +40,10 @@ proto-lens-driven code generation into the cabal stanza.
 - `proto/daemon_substrate/workflow.proto` (`WorkflowEvent`, `WorkflowKind` enum, `ObjectRef`).
   `WorkflowEvent` carries `event_id`, `produced_at`, `deadline_at` (`0` = no deadline),
   `workflow_kind`, `payload_type`, and a `payload` oneof of `bytes inline_bytes` vs
-  `ObjectRef object_ref`. Substrate enforces the inline-vs-ref switch at publish time per
-  `BootConfig.blobInlineThresholdBytes`. See the schema in
+  `ObjectRef object_ref`. The producer chooses the branch by payload nature; the substrate is
+  payload-blind and enforces only a max inline-payload size (guard rail) at publish time,
+  failing closed with a typed `InlinePayloadTooLarge` error per `BootConfig.maxInlinePayloadBytes`
+  rather than rewriting the envelope. See the schema in
   [`../documents/reference/proto_surface.md`](../documents/reference/proto_surface.md).
 - `proto/daemon_substrate/control.proto` (`ControlEnvelope`, `Drain`, `Reload`)
 - `proto/daemon_substrate/orchestrator_worker.proto` (`OrchestratorToWorker`, `WorkerResult`,
@@ -66,7 +68,9 @@ proto-lens-driven code generation into the cabal stanza.
 type (encode → decode → equality). Round-trip test asserts the new `WorkflowEvent.payload`
 oneof preserves identity across the `inline_bytes` and `object_ref` branches, and that
 `WorkflowKind` round-trips for every variant (including `WORKFLOW_KIND_UNSPECIFIED` for
-proto3 default behavior).
+proto3 default behavior). A publish-path test asserts the guard rail: an over-max `inline_bytes`
+payload is rejected at publish time with a typed `InlinePayloadTooLarge` error (the substrate
+does not externalize it), while an `object_ref` payload of any size publishes unaffected.
 
 ### Sprint 4.2: `HasEngine` typeclass + engine-handle sum [Planned]
 
@@ -206,6 +210,8 @@ fromProto :: Daemon.Proto.Workflow.WorkflowEvent -> Either WireError WorkflowEve
 ## Documentation Requirements
 
 **Engineering docs to create/update:**
+- `documents/engineering/cabal_layout.md` updates with the proto code-gen wiring (proto-lens
+  `build-tool-depends` + `autogen-modules`) landed in Sprint 4.1.
 - `documents/engineering/mock_engine.md` updates from "planned" to current-state — including
   the batch-native `NonEmpty MockRequest -> NonEmpty MockResult` shape.
 - `documents/architecture/lifecycle_policy.md` updates the "Library modules" entry for

@@ -38,17 +38,19 @@ Define `Daemon.Config.BootConfig role app`, the `Role = Worker | Orchestrator` t
 Dhall decoder. The `app` type parameter is the consumer-specific plug; the substrate provides
 a `()` default and a `Dhall.FromDhall app` constraint at the use site.
 
-Adds `blobInlineThresholdBytes :: Natural` (default `262144` = 256 KiB) governing the
-substrate's large-blob handoff convention: payloads above the threshold MUST flow as
-`WorkflowEvent.object_ref` rather than `inline_bytes`. See
+Adds `maxInlinePayloadBytes :: Natural` (default `1048576` = 1 MiB) — a broker guard rail, not
+a router. Placement is the producer's choice by payload nature (static binary artifacts flow as
+`WorkflowEvent.object_ref` at any size); this cap only bounds what is inlined, and the substrate
+**rejects** an over-max `inline_bytes` at publish time with a typed error rather than
+externalizing it. See
 [`../documents/architecture/pulsar_minio_ssot.md`](../documents/architecture/pulsar_minio_ssot.md).
 
 #### Deliverables
 
-- `src/Daemon/Config/BootConfig.hs` populated, including `blobInlineThresholdBytes`
+- `src/Daemon/Config/BootConfig.hs` populated, including `maxInlinePayloadBytes`
 - `dhall/orchestrator.dhall` and `dhall/worker.dhall` schema stubs for the test harness
 - unit tests covering: decode round-trip, schema mismatch fails closed, role tag enforcement,
-  `blobInlineThresholdBytes` default value used when field omitted
+  `maxInlinePayloadBytes` default value used when field omitted
 
 ### Sprint 3.2: `LiveConfig` + SIGHUP reload [Planned]
 
@@ -144,7 +146,7 @@ Sprint 8.3.
 
 #### Deliverables
 
-- `src/Daemon/Signal.hs` populated (`applyDaemonSignal :: DaemonControl -> DaemonSignal -> IO DaemonControlSnapshot`)
+- `src/Daemon/Signal.hs` populated (`applyDaemonSignal :: DaemonRuntime -> DaemonSignal -> IO DaemonRuntimeSnapshot`, where `DaemonRuntime` is the live record defined in Sprint 3.4)
 - `src/Daemon/Lifecycle/Endpoints.hs` populated (minimal HTTP server stanza)
 - unit tests covering signal effects on `DaemonRuntime`; integration of HTTP routes covered in
   Phase 8's `daemon-substrate-lifecycle` stanza
@@ -171,7 +173,7 @@ supplied callback.
 
 **Engineering docs to create/update:**
 - `documents/architecture/library_consumption_model.md` updates `BootConfig role app` and
-  `LiveConfig` from "planned shape" to current-state, including `blobInlineThresholdBytes`
+  `LiveConfig` from "planned shape" to current-state, including `maxInlinePayloadBytes`
   and the `BatchingPolicy` / `SchedulerPolicy` additions.
 - `documents/architecture/daemon_roles.md` updates the signal / lifecycle paragraphs from
   forward-looking to current-state.

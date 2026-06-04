@@ -2,7 +2,7 @@
 
 **Status**: Authoritative source
 **Supersedes**: N/A
-**Referenced by**: [../README.md](../README.md), [../architecture/library_consumption_model.md](../architecture/library_consumption_model.md), [../reference/cli_surface.md](../reference/cli_surface.md), [../development/testing_strategy.md](../development/testing_strategy.md)
+**Referenced by**: [../README.md](../README.md), [../architecture/library_consumption_model.md](../architecture/library_consumption_model.md), [../reference/cli_surface.md](../reference/cli_surface.md), [../development/testing_strategy.md](../development/testing_strategy.md), [pulsar_native_client.md](pulsar_native_client.md)
 
 > **Purpose**: Define the `daemon-substrate.cabal` package shape — what library, executables,
 > and test-suites exist, and why no further sublibrary or package split is supported yet.
@@ -26,9 +26,12 @@ daemon-substrate/
 ├── cabal.project          # GHC pin (9.12, matching hostbootstrap base), allow-newer carve-outs
 ├── src/                   # library sources
 │   └── Daemon/
-│       ├── Sub.hs              # typed Subprocess + runStreaming (single shell-out seam)
+│       ├── Sub.hs              # typed Subprocess + runStreaming (shell-out seam for MinIO/Harbor/Kubectl/SubprocessEngine)
 │       ├── Pulsar.hs           # HasPulsar
+│       ├── Pulsar/Native.hs    # production HasPulsar over Pulsar's native binary protocol (in-process; not a subprocess)
+│       ├── Pulsar/Native/      # Frame, Connection, Lookup, Producer, Consumer, Compression
 │       ├── Pulsar/Admin.hs     # typed Pulsar admin operations
+│       ├── Pulsar/Admin/Http.hs # production admin impl over the broker admin REST API (in-process)
 │       ├── MinIO.hs            # HasMinIO
 │       ├── MinIO/Cache.hs      # ephemeral cache wrapper
 │       ├── MinIO/Store.hs      # content-addressed blob/manifest/pointer + CAS
@@ -79,6 +82,7 @@ daemon-substrate/
 │   └── haskell-style/
 │       └── Spec.hs
 └── proto/                 # .proto sources, code-generated into src/Daemon/Proto
+                           #   incl. vendored PulsarApi.proto (Pulsar wire protocol)
 ```
 
 ## Library stanza
@@ -184,6 +188,24 @@ Dhall's transitive CBOR dependencies (same posture as the consumer projects).
 The base image ships a warm Haskell store with the common build dependencies pre-resolved, so
 the project container build only compiles `daemon-substrate`'s own modules. See
 [hostbootstrap_integration.md](hostbootstrap_integration.md) for the integration shape.
+
+## Native Pulsar client dependencies
+
+`Daemon.Pulsar.Native` and `Daemon.Pulsar.Admin.Http` make Pulsar an in-process client rather
+than a subprocess, which adds these GHC-ecosystem library dependencies (all in the warm store;
+no new system binary, no Node runtime, no `pulsar-admin` CLI):
+
+- `network` — the raw TCP socket for the binary protocol (port 6650).
+- `http-client` + `http-client-tls` — the admin REST client (port 8080).
+- `tls` — only when Pulsar TLS (`pulsar+ssl` / `https` admin) is enabled; in-cluster traffic
+  may be plaintext.
+- the `proto-lens-protoc`-generated `Daemon.Proto.PulsarApi` module from the vendored
+  `proto/PulsarApi.proto` (same generator already used for the substrate envelopes).
+
+Compression backends (`lz4`, `zstd`, `snappy`, `zlib`) are **opt-in and default-off**: they are
+C-FFI bindings, and the substrate's message-shaped envelopes are small, so `Daemon.Pulsar.Native`
+ships with compression `NONE` and only links a backend when a cohort enables it via config. See
+[pulsar_native_client.md](pulsar_native_client.md).
 
 ## Cross-references
 

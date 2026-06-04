@@ -21,7 +21,14 @@
 Bring the substrate's transport / cluster-I/O surface into existence so the lifecycle
 scaffolding in Phase 3 and the base loops in Phase 5 have a typed seam to dispatch through.
 Every shell-out the library performs goes through one typed `Subprocess` boundary
-(`Daemon.Sub`, landed in Phase 1).
+(`Daemon.Sub`, landed in Phase 1) — this covers MinIO (`curl`), Harbor (`docker` / `curl`),
+Kubectl (`kubectl`), and `SubprocessEngine`. **Pulsar is the one deliberate exception:** both
+its data plane (native binary protocol) and its admin plane (admin REST) run in-process, since
+Pulsar sits on the substrate's deadline-sensitive hot path and a subprocess / proxy hop on that
+path is exactly the latency the substrate cannot afford. The in-process Pulsar client still
+obeys the configuration doctrine — broker endpoints come from typed config, never the
+environment or a `$PATH`-resolved command (see
+[`development_plan_standards.md` § M](development_plan_standards.md)).
 
 `HasEngine` does **not** land here — it lands in Phase 4 alongside the mock engine and
 protobuf envelopes.
@@ -31,7 +38,9 @@ protobuf envelopes.
 ### Sprint 2.1: `HasPulsar` typeclass + subprocess + filesystem impls [Planned]
 
 **Status**: Planned
-**Docs to update**: `documents/engineering/pulsar_topics.md`, `system-components.md`
+**Docs to update**: `documents/engineering/pulsar_native_client.md` (new),
+`documents/engineering/pulsar_topics.md`, `documents/engineering/cabal_layout.md`,
+`documents/reference/proto_surface.md`, `system-components.md`
 
 #### Objective
 
@@ -50,13 +59,24 @@ Ship two implementations:
 
 - `Daemon.Test.FilesystemPulsar` — in-process implementation backed by an in-memory ledger
   (used for unit tests).
-- `Daemon.Pulsar.WebSocketSubprocess` — production implementation driving a Node-WebSocket
-  client via the `Daemon.Sub` typed-subprocess boundary.
+- `Daemon.Pulsar.Native` — production **in-process** implementation speaking Pulsar's native
+  binary protocol over TCP (port 6650). It does **not** go through `Daemon.Sub`: there is no
+  subprocess, no Node runtime, and no WebSocket proxy hop. A single multiplexed TCP connection
+  per owner broker carries every producer and consumer, request/response correlated by
+  `request_id`. See [`../documents/engineering/pulsar_native_client.md`](../documents/engineering/pulsar_native_client.md)
+  for the framing, command set, connection model, and the rationale for choosing the native
+  protocol over the WebSocket gateway.
 
 #### Deliverables
 
 - `src/Daemon/Pulsar.hs` populated (typeclass + types)
-- `src/Daemon/Pulsar/WebSocketSubprocess.hs` populated
+- `src/Daemon/Pulsar/Native.hs` populated (production `HasPulsar` instance), with internal
+  sub-modules `Native/Frame.hs` (wire framing), `Native/Connection.hs` (multiplexed TCP
+  connection + `CONNECT` handshake + `PING`/`PONG` keepalive), `Native/Lookup.hs` (topic
+  `LOOKUP` + partitioned-topic metadata), `Native/Producer.hs`, `Native/Consumer.hs`, and
+  `Native/Compression.hs` (optional, default `NONE`)
+- `proto/PulsarApi.proto` vendored (the Pulsar wire-protocol schema; compiled by the existing
+  `proto-lens-protoc` step into `Daemon.Proto.PulsarApi`)
 - `src/Daemon/Test/FilesystemPulsar.hs` populated
 - unit tests covering: publish→consume, ack, negative-ack, seek, dedup-window behavior,
   Exclusive-rejects-second-subscriber
@@ -84,7 +104,9 @@ backends.
 
 - `src/Daemon/Pulsar/Admin.hs` populated
 - filesystem implementation extending `Daemon.Test.FilesystemPulsar`
-- subprocess implementation invoking `pulsar-admin` via `Daemon.Sub`
+- production implementation `Daemon.Pulsar.Admin.Http` — an **in-process** HTTP client
+  (`http-client` + `http-client-tls`) against the broker admin REST API (port 8080); no
+  `pulsar-admin` CLI and no `Daemon.Sub` shell-out
 - unit tests covering idempotency (run create twice → no error, no churn) and audit-shaped
   return values
 
@@ -198,21 +220,27 @@ invoking `kubectl` with `KUBECONFIG` set.
 ## Documentation Requirements
 
 **Engineering docs to create/update:**
+- `documents/engineering/pulsar_native_client.md` (new) — canonical contract for
+  `Daemon.Pulsar.Native`: wire framing, command set, connection / multiplexing model,
+  `LOOKUP` / partitioned-topic handling, send-batching / flow-control / ack semantics,
+  compression policy, typed config fields, and the native-vs-WebSocket rationale.
 - `documents/engineering/pulsar_topics.md` updates the inventory rows for admin / audit /
   leader-control topics from "planned" to current-state declarative.
+- `documents/engineering/cabal_layout.md` adds the native-client dependencies (`network`,
+  `http-client` / `http-client-tls`, optional `tls`) and the vendored `PulsarApi.proto`
+  generation.
 - `documents/engineering/minio_buckets.md` updates the bucket layout (`blobs/`, `manifests/`,
   `pointers/`, `archives/`) from "planned" to current-state declarative; orphan-scan
   description reads as the implemented behavior.
-- `documents/engineering/cabal_layout.md` updates with the proto code-gen wiring (proto-lens
-  build-tool-depends).
 
 **Architecture docs to create/update:**
 - `documents/architecture/lifecycle_policy.md` updates the "Library modules" section as
   `Daemon.Pulsar.Admin` and `Daemon.MinIO.Admin` land.
 
 **Reference docs to create/update:**
-- `documents/reference/proto_surface.md` does not change in this phase (proto schemas land in
-  Phase 4).
+- `documents/reference/proto_surface.md` gains a note that `proto/PulsarApi.proto` is vendored
+  in this phase as the Pulsar wire-protocol schema — distinct from the substrate-owned
+  `proto/daemon_substrate/*` envelopes, which still land in Phase 4.
 
 **Cross-references to add:**
 - `system-components.md` flips the relevant typeclass and admin rows to `Implemented: yes`

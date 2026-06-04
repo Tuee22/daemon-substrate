@@ -36,8 +36,9 @@ toolchain.
 
 #### Deliverables
 
-- `daemon-substrate.cabal` with one `library` stanza and the three `test-suite` stanzas
-  (initially empty `Main.hs` placeholders)
+- `daemon-substrate.cabal` with one `library` stanza and the four `test-suite` stanzas
+  (`daemon-substrate-unit`, `daemon-substrate-lifecycle`, `daemon-substrate-integration`,
+  `daemon-substrate-haskell-style`; initially empty `Main.hs` placeholders)
 - `cabal.project` with `with-compiler: ghc-9.12` (matching the
   [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap) base image) and the
   `allow-newer: *:base, *:template-haskell` carve-out
@@ -64,7 +65,9 @@ compiles them and so Phase 2 has a place to add typeclass definitions.
 
 #### Deliverables
 
-- `src/Daemon/Pulsar.hs`, `src/Daemon/MinIO.hs`, `src/Daemon/MinIO/Cache.hs`,
+- `src/Daemon/Sub.hs` (the typed `Subprocess` boundary later phases shell out through for
+  MinIO / Harbor / Kubectl / `SubprocessEngine`; Pulsar runs in-process instead),
+  `src/Daemon/Pulsar.hs`, `src/Daemon/MinIO.hs`, `src/Daemon/MinIO/Cache.hs`,
   `src/Daemon/Engine.hs`, `src/Daemon/Lifecycle.hs`, `src/Daemon/Config.hs`,
   `src/Daemon/Worker.hs`, `src/Daemon/Orchestrator.hs`, `src/Daemon/WorkflowState.hs`
 - Each file is a bare `module Daemon.<Name> where` with no exports

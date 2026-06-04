@@ -32,15 +32,16 @@ documents. Populate the `documents/` and `DEVELOPMENT_PLAN/` trees with the arch
 engineering, and operations docs the later phases reference.
 
 This phase is open. Its closure requires completion of every documentation obligation called
-out by Sprints 0.1 – 0.4. The doc validator (Phase 0 Sprint 0.5) is **deferred to Phase 7
-Sprint 8.5**, where it lands as part of the test-lint gate; Phase 0 closure does not depend
-on it.
+out by Sprints 0.1 – 0.4 and 0.6. The doc validator (Phase 0 Sprint 0.5) is **deferred to
+Phase 8 Sprint 8.5**, where it lands as part of the test-lint gate; Phase 0 closure does not
+depend on it.
 
 ### Phase 1 — library scaffolding and cabal package
 
 Establish `daemon-substrate.cabal`, `cabal.project` (GHC 9.12 pinned, matching the
 `hostbootstrap` base image), the empty `src/Daemon/` module skeleton (including
-`Daemon.Sub` — the typed `Subprocess` boundary that every later phase shells out through),
+`Daemon.Sub` — the typed `Subprocess` boundary that later phases shell out through for MinIO,
+Harbor, Kubectl, and `SubprocessEngine`; Pulsar is the in-process exception),
 and a no-op CI build that proves `cabal build all` succeeds. No public typeclass surface yet;
 just the structural shell.
 
@@ -71,9 +72,10 @@ Depends on Phase 2 because the lifecycle wires through the capability typeclasse
 Land `HasEngine` (batch-native: `NonEmpty req -> m (NonEmpty (Either EngineError EngineResponse))`)
 with `SubprocessEngine` / `NativeEngine` variants. Land the mock engine
 (`Daemon.Test.MockEngine`) — deterministic SHA-256 placeholder, no real ML, batch-shaped.
-Land the substrate-owned protobuf envelopes (`Workflow` with `deadline_at`, `WorkflowKind`,
-and the `payload` oneof; `Control`; `Lifecycle`; `OrchestratorWorker`; `Audit` with lineage
-references whose graph indexing is deferred) and the generated `Daemon.Proto.*` modules.
+Land the substrate-owned protobuf envelopes (`WorkflowEvent` with `deadline_at`,
+`WorkflowKind`, and the `payload` oneof; `ControlEnvelope`; `LifecyclePhase` /
+`ReadinessReport`; `OrchestratorToWorker`; `AuditEvent` with lineage references whose graph
+indexing is deferred) and the generated `Daemon.Proto.*` modules.
 Land `Daemon.Audit` — the compacted-topic helper (keyed write + replay on startup) the
 reconciler depends on. Land the `Daemon.Wire.*` hand-written ADT layer (Sprint 4.5) that
 wraps the generated `Daemon.Proto.*` records so application code stays idiomatic Haskell;
@@ -82,7 +84,7 @@ round-trip property tests are the conformance suite.
 Depends on Phase 3 because the engine seam reads `BootConfig` and the audit helper reads the
 lifecycle phase.
 
-### Phase 5 — base loops: worker, orchestrator, bridge, fan-in bootstrap, reconciler
+### Phase 5 — base loops: worker, orchestrator, bridge, bootstrap, reconciler
 
 Land the five base loops, `Daemon.Consumer` (consumer-batch primitive with dedup + typed
 `HandlerRouter` keyed by `payload_type` URL prefix + transparent `ObjectRef` materialization),
@@ -104,7 +106,7 @@ writing raw Pulsar code:
 Depends on Phase 4 because the loops dispatch through batch-native `HasEngine` and publish to
 the audit topic, and depend on the `Daemon.Wire.*` wrapper layer from Sprint 4.5.
 
-### Phase 6 — kind cluster and Helm chart
+### Phase 6 — cluster bring-up tree (kind cluster and Helm chart)
 
 Land the cluster bring-up tree `src/Daemon/Cluster/{Kind,Storage,Helm,Harbor,Pulsar,MinIO,Workload,EdgePort}.hs`,
 the `chart/` directory with Harbor / Pulsar / MinIO chart dependencies and the orchestrator /

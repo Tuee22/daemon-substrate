@@ -26,7 +26,7 @@ The phases below focus on the Haskell library, the in-cluster reconcilers, and t
 | 3 | [BootConfig / LiveConfig / LifecyclePolicy + lifecycle](phase-3-bootconfig-liveconfig-lifecycle.md) | Blocked (by Phase 2) |
 | 4 | [Engine + mock + protos + audit](phase-4-engine-mock-protos-audit.md) | Blocked (by Phase 3) |
 | 5 | [Base loops (worker, orchestrator, bridge, bootstrap, reconciler)](phase-5-base-loops.md) | Blocked (by Phase 4) |
-| 6 | [Kind cluster and Helm chart](phase-6-cluster-bringup-tree.md) | Blocked (by Phase 5) |
+| 6 | [Cluster bring-up tree (kind cluster and Helm chart)](phase-6-cluster-bringup-tree.md) | Blocked (by Phase 5) |
 | 7 | [hostbootstrap.dhall and project Dockerfile](phase-7-hostbootstrap-and-project-dockerfile.md) | Blocked (by Phase 6) |
 | 8 | [Test harness integration](phase-8-test-harness-integration.md) | Blocked (by Phase 7) |
 

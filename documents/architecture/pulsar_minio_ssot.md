@@ -2,7 +2,7 @@
 
 **Status**: Authoritative source
 **Supersedes**: N/A
-**Referenced by**: [../README.md](../README.md), [../../README.md](../../README.md), [daemon_roles.md](daemon_roles.md), [library_consumption_model.md](library_consumption_model.md), [lifecycle_policy.md](lifecycle_policy.md), [../engineering/pulsar_topics.md](../engineering/pulsar_topics.md), [../engineering/minio_buckets.md](../engineering/minio_buckets.md), [../engineering/orchestration_topologies.md](../engineering/orchestration_topologies.md), [../engineering/batching.md](../engineering/batching.md), [../reference/proto_surface.md](../reference/proto_surface.md)
+**Referenced by**: [../README.md](../README.md), [../../README.md](../../README.md), [daemon_roles.md](daemon_roles.md), [library_consumption_model.md](library_consumption_model.md), [lifecycle_policy.md](lifecycle_policy.md), [../engineering/pulsar_topics.md](../engineering/pulsar_topics.md), [../engineering/pulsar_native_client.md](../engineering/pulsar_native_client.md), [../engineering/minio_buckets.md](../engineering/minio_buckets.md), [../engineering/orchestration_topologies.md](../engineering/orchestration_topologies.md), [../engineering/batching.md](../engineering/batching.md), [../reference/proto_surface.md](../reference/proto_surface.md)
 
 > **Purpose**: Define the authoritative split between Pulsar (workflow source of truth) and
 > MinIO (static blob source of truth), and the rules that keep the two complementary rather
@@ -94,20 +94,32 @@ never the authority — see [daemon_roles.md § Ephemeral cache](daemon_roles.md
 
 ## Large-blob handoff
 
-Every Pulsar message larger than `BootConfig.blobInlineThresholdBytes` (default 262144 =
-256 KiB; tunable per cohort) MUST flow as `WorkflowEvent.object_ref`, not
-`WorkflowEvent.inline_bytes`. The substrate enforces the switch at publish time: a producer
-that hands an over-threshold `inline_bytes` to `Daemon.Consumer` triggers the substrate to
-`putBlob` the bytes and rewrite the envelope to carry an `ObjectRef`. The receiver may opt
-into transparent materialization via `Daemon.MinIO.Store.readBlob` so that handler code sees
-the bytes back in-memory without explicit fetch.
+Placement is by the **nature** of the payload, not its size. Static binary artifacts — model
+weights, image / audio / video, large training tensors — flow as `WorkflowEvent.object_ref`
+*because of what they are*, at any size: they have a lifecycle (retention, archival, sweep),
+are content-addressable (dedup by ETag), and have no business sitting in broker backlog. The
+**producer** makes that choice and publishes an `ObjectRef`; the substrate stays payload-blind
+and never inspects bytes to second-guess it. The receiver may opt into transparent
+materialization via `Daemon.MinIO.Store.readBlob` so that handler code sees the bytes back
+in-memory without explicit fetch.
+
+Size is a separate concern, enforced as a **broker guard rail** — not a router. The substrate
+caps inline-payload size at `BootConfig.maxInlinePayloadBytes` (default 1048576 = 1 MiB;
+tunable per cohort) and **fails closed at publish time** with a typed error
+(`InlinePayloadTooLarge`) when a producer hands it an over-max `inline_bytes`. It does **not**
+silently `putBlob` and rewrite the envelope — placement is the producer's decision, so an
+over-max inline payload is a producer bug, surfaced loudly and locally rather than papered over.
 
 Rationale: multimodal inference (`infernix` accepting image / audio / video as inputs *and*
 producing them as outputs) and large training tensors (`jitML`) would otherwise create giant
-Pulsar payloads with no lifecycle, no dedup, and broker memory pressure. Centralizing the
-convention at substrate level keeps both consumers honest, lets MinIO own blob lifecycle
-(retention, archival, sweep), and makes `BucketLifecycle` the single declarative surface for
-how long a transient payload sticks around.
+Pulsar payloads with no lifecycle, no dedup, and broker memory pressure — which is why those
+artifacts ride in MinIO by nature, letting `BucketLifecycle` be the single declarative surface
+for how long a transient payload sticks around. The guard rail covers the residual case
+type-based placement does not: legitimately-large *message-shaped* in-motion state (LLM
+conversation context, RL trajectories, large batched envelopes) is not a static artifact, so it
+stays inline, yet can still stress broker memory and replication. The cap (and ultimately
+Pulsar's own `maxMessageSize`) bounds it, and a substrate-level publish-time check is a far
+better failure surface than a broker-level rejection deeper in the stack.
 
 Substrate-owned envelopes (`WorkflowEvent`, `OrchestratorToWorker`, `WorkerResult`,
 `AuditEvent`) themselves stay small — they are message-shaped by design. The threshold
@@ -116,7 +128,11 @@ applies only to the consumer payload carried inside `WorkflowEvent.payload`.
 ## Substrate-owned Pulsar abstractions
 
 The substrate ships three layered Pulsar abstractions; consumers compose them rather than
-writing raw Pulsar client code.
+writing raw Pulsar client code. All three sit on the in-process native-protocol client
+(`Daemon.Pulsar.Native`), which talks the Pulsar binary protocol directly to the owner broker
+over TCP — so the "low-latency fan-out" the split relies on is realized by a direct binary-wire
+connection, not a WebSocket-proxy hop. See
+[../engineering/pulsar_native_client.md](../engineering/pulsar_native_client.md).
 
 1. **Envelope layer** — `WorkflowEvent` and friends in [../reference/proto_surface.md](../reference/proto_surface.md);
    `Daemon.Wire.*` ADTs in application code.

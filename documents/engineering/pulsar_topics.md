@@ -2,7 +2,7 @@
 
 **Status**: Authoritative source
 **Supersedes**: N/A
-**Referenced by**: [../README.md](../README.md), [../architecture/pulsar_minio_ssot.md](../architecture/pulsar_minio_ssot.md), [../architecture/lifecycle_policy.md](../architecture/lifecycle_policy.md), [cluster_topology.md](cluster_topology.md), [mock_engine.md](mock_engine.md), [orchestration_topologies.md](orchestration_topologies.md), [batching.md](batching.md), [../reference/proto_surface.md](../reference/proto_surface.md)
+**Referenced by**: [../README.md](../README.md), [../architecture/pulsar_minio_ssot.md](../architecture/pulsar_minio_ssot.md), [../architecture/lifecycle_policy.md](../architecture/lifecycle_policy.md), [cluster_topology.md](cluster_topology.md), [mock_engine.md](mock_engine.md), [orchestration_topologies.md](orchestration_topologies.md), [batching.md](batching.md), [pulsar_native_client.md](pulsar_native_client.md), [../reference/proto_surface.md](../reference/proto_surface.md)
 
 > **Purpose**: Inventory every Pulsar topic the test harness uses, the subscription mode each
 > subscriber attaches with, and the protobuf payload each topic carries.

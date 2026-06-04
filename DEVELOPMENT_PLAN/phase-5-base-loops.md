@@ -39,7 +39,7 @@ typed Pulsar topology builders consumers compose into their orchestrator workflo
 - `Daemon.Consumer` — consume from a subscription, decode the envelope via `Daemon.Wire.*`,
   honor `WorkflowEvent.payload` materialization (transparent `Daemon.MinIO.Store.readBlob`
   when `WorkflowEvent.payload = object_ref` and the consumer opts in), dispatch via the typed
-  `HandlerRouter` keyed by `payload_type` URL prefix, ack on success, nack on failure. L3
+  `HandlerRouter` keyed by `payload_type` URL prefix, ack on success, nack on failure. The
   dedup cache is `LiveConfig`-tuned.
 - `Daemon.WorkflowState` — append-to-Pulsar then advance in-memory fold; rehydrate on
   `AcquireClients`.

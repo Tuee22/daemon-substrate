@@ -13,7 +13,7 @@
 - Consumers compose `Topology` values into their orchestrator's workflow graph; substrate provisions topics on `Acquire`, dispatches via `HandlerRouter` at runtime, and surrenders subscriptions on `Drain`.
 - Batched variants (`BatchedFanOut`, `BatchedFanIn`) accept a `BatchingPolicy` + `SchedulerPolicy` + `BatchingHooks` — full spec in [batching.md](batching.md).
 - Substrate is payload-agnostic: dispatch is by `WorkflowEvent.payload_type` URL prefix via `Daemon.Consumer`'s `HandlerRouter`; substrate never inspects payload bytes.
-- Large payloads (above `BootConfig.blobInlineThresholdBytes`) flow as `ObjectRef` in `WorkflowEvent.payload`; the topology layer materializes transparently on read when the consumer opts in.
+- Static binary artifacts ride as `ObjectRef` in `WorkflowEvent.payload` by nature (the producer's choice, at any size); inlined payloads are capped by the `BootConfig.maxInlinePayloadBytes` guard rail. The topology layer materializes `ObjectRef` transparently on read when the consumer opts in.
 
 ## Current Status
 

@@ -51,7 +51,9 @@ the singleton-batch case; multi-element batches flow when the worker is fed by a
 |--------|-------|-------------|
 | `Daemon.Sub` | 1 | no |
 | `Daemon.Pulsar` | 2 | no |
+| `Daemon.Pulsar.Native` | 2 | no |
 | `Daemon.Pulsar.Admin` | 2 | no |
+| `Daemon.Pulsar.Admin.Http` | 2 | no |
 | `Daemon.MinIO` | 2 | no |
 | `Daemon.MinIO.Cache` | 2 | no |
 | `Daemon.MinIO.Store` | 2 | no |
@@ -62,6 +64,7 @@ the singleton-batch case; multi-element batches flow when the worker is fed by a
 | `Daemon.Config.LiveConfig` | 3 | no |
 | `Daemon.Config.LifecyclePolicy` | 3 | no |
 | `Daemon.Lifecycle` | 3 | no |
+| `Daemon.Lifecycle.Endpoints` | 3 | no |
 | `Daemon.Signal` | 3 | no |
 | `Daemon.Engine` | 4 | no |
 | `Daemon.Audit` | 4 | no |
@@ -80,6 +83,14 @@ the singleton-batch case; multi-element batches flow when the worker is fed by a
 Test-harness-internal modules (`Daemon.Cluster.*`, `Daemon.Test.Filesystem*`,
 `Daemon.Test.MockEngine`, etc.) land in Phases 2 and 6; they are exposed by the library for
 the `daemon-substrate-test` executable but are not part of the consumer-facing surface.
+
+`Daemon.Pulsar.Native` and `Daemon.Pulsar.Admin.Http` are the production Pulsar
+implementations. Unlike the MinIO / Harbor / Kubectl production impls (which shell out through
+`Daemon.Sub`), the Pulsar pair runs **in-process** — the native binary protocol over TCP for the
+data plane and the admin REST API for the admin plane. This is the one deliberate exception to
+the subprocess boundary; see
+[development_plan_standards.md § M](development_plan_standards.md) and
+[`../documents/engineering/pulsar_native_client.md`](../documents/engineering/pulsar_native_client.md).
 
 ## Typeclasses
 
@@ -139,6 +150,7 @@ identical variant order to the table above.
 | `proto/daemon_substrate/lifecycle.proto` | `LifecyclePhase` enum, `ReadinessReport` | substrate |
 | `proto/daemon_substrate/audit.proto` | `AuditEvent` (with `source_refs` / `result_refs` lineage; graph indexing deferred), `ResourceRef`, `ReconcileAction` | substrate |
 | `proto/daemon_substrate_test/mock.proto` | `MockRequest`, `MockBatch`, `MockResult` | test harness |
+| `proto/PulsarApi.proto` | vendored Pulsar wire-protocol schema (`BaseCommand` + sub-commands); compiled into `Daemon.Proto.PulsarApi` for `Daemon.Pulsar.Native` | vendored (Apache Pulsar) |
 
 ## Pulsar topics (test harness)
 
@@ -177,6 +189,12 @@ minutes; the harness uses a tight 30-second window so tests can exercise expirat
 | `daemon-substrate-test-orchestrator` | Deployment, `replicas: 2`, **no** anti-affinity (horizontally scalable; cardinality bounded by Pulsar `Shared` subscription); WAN egress permitted | both |
 | `daemon-substrate-test-worker` | Deployment, `replicas: 2`, required pod anti-affinity | linux-cpu only (apple-silicon runs worker on host) |
 
+The worker's `requiredDuringScheduling` anti-affinity on `kubernetes.io/hostname` means the
+linux-cpu kind cluster must provision **at least two nodes**, or only one worker pod
+schedules. The kind node count is declared in
+[`../documents/engineering/cluster_topology.md`](../documents/engineering/cluster_topology.md)
+and materialized by `Daemon.Cluster.Kind` (Phase 6 Sprint 6.1).
+
 ## Cabal stanzas
 
 | Stanza | Type | Source dir |
@@ -209,9 +227,18 @@ for the integration shape.
 
 ## Base image
 
+`hostbootstrap` publishes a full set of base images; the substrate consumes only the CPU
+base below (the Apple cohort uses the `HostDaemon` model and builds host-native, so it pulls
+no base image).
+
 | Tag | Used by | Provides |
 |-----|---------|----------|
-| `docker.io/tuee22/hostbootstrap:basecontainer-cpu-amd64` / `-arm64` | Linux CPU cohort | GHC 9.12, Cabal, kube tools (`kubectl`, `helm`, `kind`), `protoc`, `ormolu` / `fourmolu`, `hlint`, warm Haskell store |
+| `docker.io/tuee22/hostbootstrap:basecontainer-cpu-amd64` / `-arm64` | Linux CPU cohort | GHC 9.12, Cabal, kube tools (`kubectl`, `helm`, `kind`), `protoc`, `ormolu`, `hlint`, warm Haskell store |
+
+The Pulsar client is in-process pure Haskell (`Daemon.Pulsar.Native` over the native binary
+protocol; `Daemon.Pulsar.Admin.Http` over admin REST), so the base image needs **no** Node
+runtime and **no** `pulsar-admin` CLI for Pulsar access — the GHC-ecosystem `network` and
+`http-client` libraries from the warm Haskell store suffice.
 
 ## Dhall configs
 
