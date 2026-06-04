@@ -1,0 +1,4 @@
+worker:
+  enabled: true
+  replicas: 2
+

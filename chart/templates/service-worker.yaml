@@ -1,0 +1,19 @@
+{{- if .Values.worker.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "daemon-substrate-test.fullname" . }}-worker
+  labels:
+    {{- include "daemon-substrate-test.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "daemon-substrate-test.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+  ports:
+    - name: http
+      port: {{ .Values.worker.service.port }}
+      targetPort: http
+{{- end }}
+

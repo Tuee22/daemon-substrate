@@ -20,15 +20,15 @@ The phases below focus on the Haskell library, the in-cluster reconcilers, and t
 
 | Phase | Title | Status |
 |-------|-------|--------|
-| 0 | [Documentation and governance](phase-0-documentation-and-governance.md) | Active |
-| 1 | [Library scaffolding and cabal package](phase-1-library-scaffolding-and-cabal-package.md) | Blocked (by Phase 0) |
-| 2 | [Capability typeclasses + admin surfaces](phase-2-capability-typeclasses-and-admin-surfaces.md) | Blocked (by Phase 1) |
-| 3 | [BootConfig / LiveConfig / LifecyclePolicy + lifecycle](phase-3-bootconfig-liveconfig-lifecycle.md) | Blocked (by Phase 2) |
-| 4 | [Engine + mock + protos + audit](phase-4-engine-mock-protos-audit.md) | Blocked (by Phase 3) |
-| 5 | [Base loops (worker, orchestrator, bridge, bootstrap, reconciler)](phase-5-base-loops.md) | Blocked (by Phase 4) |
-| 6 | [Cluster bring-up tree (kind cluster and Helm chart)](phase-6-cluster-bringup-tree.md) | Blocked (by Phase 5) |
-| 7 | [hostbootstrap.dhall and project Dockerfile](phase-7-hostbootstrap-and-project-dockerfile.md) | Blocked (by Phase 6) |
-| 8 | [Test harness integration](phase-8-test-harness-integration.md) | Blocked (by Phase 7) |
+| 0 | [Documentation and governance](phase-0-documentation-and-governance.md) | Done |
+| 1 | [Library scaffolding and cabal package](phase-1-library-scaffolding-and-cabal-package.md) | Done |
+| 2 | [Capability typeclasses + admin surfaces](phase-2-capability-typeclasses-and-admin-surfaces.md) | Done |
+| 3 | [BootConfig / LiveConfig / LifecyclePolicy + lifecycle](phase-3-bootconfig-liveconfig-lifecycle.md) | Done |
+| 4 | [Engine + mock + protos + audit](phase-4-engine-mock-protos-audit.md) | Done |
+| 5 | [Base loops (worker, orchestrator, bridge, bootstrap, reconciler)](phase-5-base-loops.md) | Done |
+| 6 | [Cluster bring-up tree (kind cluster and Helm chart)](phase-6-cluster-bringup-tree.md) | Done |
+| 7 | [hostbootstrap.dhall and project Dockerfile](phase-7-hostbootstrap-and-project-dockerfile.md) | Active |
+| 8 | [Test harness integration](phase-8-test-harness-integration.md) | Active |
 
 ## Governance
 

@@ -1,0 +1,12 @@
+dependencies:
+- name: harbor
+  repository: file://charts/harbor
+  version: 0.1.0
+- name: pulsar
+  repository: file://charts/pulsar
+  version: 0.1.0
+- name: minio
+  repository: file://charts/minio
+  version: 0.1.0
+digest: sha256:b6b022724248e577ac7a1f2492d55a559d65848eec5f113e64bfd0ab9b1fa670
+generated: "2026-06-04T11:08:32.808539-04:00"

@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "daemon-substrate-test.fullname" . }}-orchestrator
+  labels:
+    {{- include "daemon-substrate-test.labels" . | nindent 4 }}
+    app.kubernetes.io/component: orchestrator
+spec:
+  replicas: {{ .Values.orchestrator.replicas }}
+  selector:
+    matchLabels:
+      {{- include "daemon-substrate-test.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: orchestrator
+  template:
+    metadata:
+      labels:
+        {{- include "daemon-substrate-test.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: orchestrator
+        egress-permitted: "true"
+    spec:
+      containers:
+        - name: daemon-substrate-test
+          image: {{ include "daemon-substrate-test.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - daemon-substrate-test
+          args:
+            - service
+            - --role
+            - orchestrator
+            - --config
+            - /etc/daemon-substrate/orchestrator.dhall
+            - --live-config
+            - /etc/daemon-substrate/live.dhall
+            - --lifecycle-policy
+            - /etc/daemon-substrate/lifecycle-policy.dhall
+          ports:
+            - name: http
+              containerPort: {{ .Values.orchestrator.service.port }}
+          resources:
+            {{- toYaml .Values.orchestrator.resources | nindent 12 }}
+          volumeMounts:
+            - name: orchestrator-config
+              mountPath: /etc/daemon-substrate
+              readOnly: true
+      volumes:
+        - name: orchestrator-config
+          configMap:
+            name: {{ include "daemon-substrate-test.orchestratorConfigName" . }}

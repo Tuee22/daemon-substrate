@@ -1,0 +1,11 @@
+packages:
+  .
+
+with-compiler: ghc-9.12
+
+allow-newer:
+  *:base,
+  *:template-haskell
+
+constraints:
+  daemon-substrate +dev-werror

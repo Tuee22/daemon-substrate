@@ -1,0 +1,4 @@
+replicas: 1
+image:
+  repository: registry
+  tag: "2"

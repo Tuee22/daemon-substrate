@@ -49,40 +49,49 @@ the singleton-batch case; multi-element batches flow when the worker is fed by a
 
 | Module | Phase | Implemented |
 |--------|-------|-------------|
-| `Daemon.Sub` | 1 | no |
-| `Daemon.Pulsar` | 2 | no |
-| `Daemon.Pulsar.Native` | 2 | no |
-| `Daemon.Pulsar.Admin` | 2 | no |
-| `Daemon.Pulsar.Admin.Http` | 2 | no |
-| `Daemon.MinIO` | 2 | no |
-| `Daemon.MinIO.Cache` | 2 | no |
-| `Daemon.MinIO.Store` | 2 | no |
-| `Daemon.MinIO.Admin` | 2 | no |
-| `Daemon.Harbor` | 2 | no |
-| `Daemon.Kubectl` | 2 | no |
-| `Daemon.Config.BootConfig` | 3 | no |
-| `Daemon.Config.LiveConfig` | 3 | no |
-| `Daemon.Config.LifecyclePolicy` | 3 | no |
-| `Daemon.Lifecycle` | 3 | no |
-| `Daemon.Lifecycle.Endpoints` | 3 | no |
-| `Daemon.Signal` | 3 | no |
-| `Daemon.Engine` | 4 | no |
-| `Daemon.Audit` | 4 | no |
-| `Daemon.Consumer` | 5 | no |
-| `Daemon.Worker` | 5 | no |
-| `Daemon.Orchestrator` | 5 | no |
-| `Daemon.Bridge` | 5 | no |
-| `Daemon.Bootstrap` | 5 | no |
-| `Daemon.Reconciler` | 5 | no |
-| `Daemon.WorkflowState` | 5 | no |
-| `Daemon.Proto.*` | 4 (generated) | no |
-| `Daemon.Wire.*` | 4 (Sprint 4.5) | no |
-| `Daemon.Topology.*` | 5 (Sprint 5.1 non-batched; Sprint 5.1.5 batched) | no |
-| `Daemon.Batching.*` | 5 (Sprint 5.1.5) | no |
+| `Daemon.Sub` | 1 | yes |
+| `Daemon.Pulsar` | 2 | yes |
+| `Daemon.Pulsar.Native` | 2 | yes |
+| `Daemon.Pulsar.Admin` | 2 | yes |
+| `Daemon.Pulsar.Admin.Http` | 2 | yes |
+| `Daemon.MinIO` | 2 | yes |
+| `Daemon.MinIO.Cache` | 2 | yes |
+| `Daemon.MinIO.Store` | 2 | yes |
+| `Daemon.MinIO.Admin` | 2 | yes |
+| `Daemon.Harbor` | 2 | yes |
+| `Daemon.Kubectl` | 2 | yes |
+| `Daemon.Config.BootConfig` | 3 | yes |
+| `Daemon.Config.LiveConfig` | 3 | yes |
+| `Daemon.Config.LifecyclePolicy` | 3 | yes |
+| `Daemon.Lifecycle` | 3 | yes |
+| `Daemon.Lifecycle.Endpoints` | 3 | yes |
+| `Daemon.Signal` | 3 | yes |
+| `Daemon.Engine` | 4 | yes |
+| `Daemon.Audit` | 4 | yes |
+| `Daemon.Proto.PulsarApi` | 2 | yes |
+| `Daemon.Consumer` | 5 | yes |
+| `Daemon.Worker` | 5 | yes |
+| `Daemon.Orchestrator` | 5 | yes |
+| `Daemon.Bridge` | 5 | yes |
+| `Daemon.Bootstrap` | 5 | yes |
+| `Daemon.Reconciler` | 5 | yes |
+| `Daemon.WorkflowState` | 5 | yes |
+| `Daemon.Proto.*` | 4 (substrate-generated modules) | yes |
+| `Daemon.Wire.*` | 4 (Sprint 4.5) | yes |
+| `Daemon.Topology.*` (non-batched) | 5 (Sprint 5.1) | yes |
+| `Daemon.Topology.Batched*` | 5 (Sprint 5.1.5) | yes |
+| `Daemon.Batching.*` | 5 (Sprint 5.1.5) | yes |
+| `Daemon.Cluster.*` | 6 (Sprint 6.1) | yes |
 
 Test-harness-internal modules (`Daemon.Cluster.*`, `Daemon.Test.Filesystem*`,
-`Daemon.Test.MockEngine`, etc.) land in Phases 2 and 6; they are exposed by the library for
-the `daemon-substrate-test` executable but are not part of the consumer-facing surface.
+`Daemon.Test.EchoEngines`, `Daemon.Test.MockEngine`, etc.) land across the implementation
+phases; they are exposed by the library for the `daemon-substrate-test` executable but are not
+part of the consumer-facing surface.
+`Daemon.Cluster.*` is implemented in Phase 6 Sprint 6.1 as deterministic cluster action plans
+for kind, manual storage, Helm, Harbor, Pulsar, MinIO, workload resources, and edge-port
+selection. The live test-harness interpreter lands after the chart and executable surfaces.
+`Daemon.Test.MockEngine` is implemented in Phase 4 Sprint 4.3 as a MinIO/cache-backed
+`NativeEngine` for encoded `MockRequest` payloads.
 
 `Daemon.Pulsar.Native` and `Daemon.Pulsar.Admin.Http` are the production Pulsar
 implementations. Unlike the MinIO / Harbor / Kubectl production impls (which shell out through
@@ -114,7 +123,7 @@ the subprocess boundary; see
 | Role | Base loop(s) | Where it runs |
 |------|--------------|---------------|
 | Worker | `Daemon.Worker.runWorker` | one per physical node; in-cluster Deployment (Linux) or host-native (Apple) |
-| Orchestrator | `Daemon.Orchestrator.runOrchestrator` + `Daemon.Reconciler.runReconciler` (concurrent threads in the same process) | always in-cluster; default `replicas: 2` |
+| Orchestrator | `Daemon.Orchestrator.runOrchestratorWithReconciler` over `runOrchestrator` + `Daemon.Reconciler.runReconciler` | always in-cluster; default `replicas: 2` |
 
 Additional base loops exported for consumer use (not their own role):
 
@@ -150,7 +159,7 @@ identical variant order to the table above.
 | `proto/daemon_substrate/lifecycle.proto` | `LifecyclePhase` enum, `ReadinessReport` | substrate |
 | `proto/daemon_substrate/audit.proto` | `AuditEvent` (with `source_refs` / `result_refs` lineage; graph indexing deferred), `ResourceRef`, `ReconcileAction` | substrate |
 | `proto/daemon_substrate_test/mock.proto` | `MockRequest`, `MockBatch`, `MockResult` | test harness |
-| `proto/PulsarApi.proto` | vendored Pulsar wire-protocol schema (`BaseCommand` + sub-commands); compiled into `Daemon.Proto.PulsarApi` for `Daemon.Pulsar.Native` | vendored (Apache Pulsar) |
+| `proto/PulsarApi.proto` | vendored Pulsar wire-protocol schema (`BaseCommand` + sub-commands); compiled into generated `Proto.PulsarApi` / `Proto.PulsarApi_Fields` and re-exported as `Daemon.Proto.PulsarApi` for `Daemon.Pulsar.Native` | vendored (Apache Pulsar) |
 
 ## Pulsar topics (test harness)
 
@@ -189,6 +198,13 @@ minutes; the harness uses a tight 30-second window so tests can exercise expirat
 | `daemon-substrate-test-orchestrator` | Deployment, `replicas: 2`, **no** anti-affinity (horizontally scalable; cardinality bounded by Pulsar `Shared` subscription); WAN egress permitted | both |
 | `daemon-substrate-test-worker` | Deployment, `replicas: 2`, required pod anti-affinity | linux-cpu only (apple-silicon runs worker on host) |
 
+The chart surface is implemented in Phase 6 Sprint 6.2 under `chart/`. It renders the
+orchestrator Deployment for both cohorts and conditionally renders the worker Deployment only
+for Linux CPU. The Harbor / Pulsar / MinIO entries are local dependency charts that now render
+deployable StatefulSets with readiness / startup probes and PVCs bound to the manual PVs.
+The harness image is built as `daemon-substrate-test:local` and loaded directly into kind
+before Helm rollout.
+
 The worker's `requiredDuringScheduling` anti-affinity on `kubernetes.io/hostname` means the
 linux-cpu kind cluster must provision **at least two nodes**, or only one worker pod
 schedules. The kind node count is declared in
@@ -205,6 +221,14 @@ and materialized by `Daemon.Cluster.Kind` (Phase 6 Sprint 6.1).
 | `daemon-substrate-lifecycle` | test-suite, `exitcode-stdio-1.0` | `test/lifecycle/` |
 | `daemon-substrate-integration` | test-suite, `exitcode-stdio-1.0` | `test/integration/` |
 | `daemon-substrate-haskell-style` | test-suite, `exitcode-stdio-1.0` | `test/haskell-style/` |
+
+The `daemon-substrate-test` executable is implemented in Phase 8 Sprint 8.1 with the documented
+`cluster`, `test`, and `service` command parser. Phase 8 Sprint 8.6 adds live Cabal delegation
+for `test ...`, concrete kind / kubectl / helm / Docker execution for `cluster ...`, live
+Pulsar and MinIO admin operations through dependency pods, PVC-backed dependency state, and
+live worker / orchestrator service loops. Managed Apple edge-port forwarding, host-worker
+handoff, and live request -> orchestrator -> host worker -> response handoff are validated.
+Full live-cluster readiness is still active because Linux CPU validation remains open.
 
 ## Bootstrap entrypoints
 
@@ -225,6 +249,14 @@ for the integration shape.
 | `hostbootstrap.dhall` | typed per-substrate config consumed by `hostbootstrap`; declares Container / HostDaemon model and mounts |
 | `docker/linux-substrate.Dockerfile` | thin project Dockerfile (`FROM ${BASE_IMAGE}` plus the project's own build steps); the heavy toolchain is in the base |
 
+`hostbootstrap.dhall` and `docker/linux-substrate.Dockerfile` are implemented in Phase 7
+Sprints 7.1 and 7.2 and validated for shape/thinness. Apple Silicon `hostbootstrap doctor`,
+`build`, `cluster up`, LaunchDaemon inspection, and `cluster down` are validated in Phase 7
+Sprint 7.3. Apple Silicon inner kind preserved-state bring-up with PVC-backed dependency
+state, named native Pulsar Failover leadership, managed edge-port forwarding, host-worker
+handoff, and live workflow handoff is validated. Linux CPU and full `Ready` kind-cluster
+validation remain active.
+
 ## Base image
 
 `hostbootstrap` publishes a full set of base images; the substrate consumes only the CPU
@@ -244,12 +276,17 @@ runtime and **no** `pulsar-admin` CLI for Pulsar access — the GHC-ecosystem `n
 
 | File | Contents | Read by |
 |------|----------|---------|
-| `dhall/orchestrator.dhall` | Orchestrator `BootConfig` + `LiveConfig` + `LifecyclePolicy` | `daemon-substrate-test service --role orchestrator` |
-| `dhall/worker.dhall` | Worker `BootConfig` + `LiveConfig` | `daemon-substrate-test service --role worker` |
+| `dhall/orchestrator.dhall` | Orchestrator `BootConfig` with harness app topic graph | `daemon-substrate-test service --role orchestrator` |
+| `dhall/worker.dhall` | Worker `BootConfig` with harness cohort, work topic, result topic, and cache directory | `daemon-substrate-test service --role worker` |
+| `dhall/live.dhall` | Shared `LiveConfig` stub with retry, dedup cache, drain deadline, batching, and scheduler policy | `daemon-substrate-test service --role <role>` |
+| `dhall/lifecycle-policy.dhall` | Orchestrator `LifecyclePolicy` with all four `TopicLifecycle` modes and harness bucket declarations | `daemon-substrate-test service --role orchestrator` |
 
 Lifecycle policy shape (`TopicLifecycle`, `BucketLifecycle`, `LifecyclePolicy`) lives in
 `Daemon.Config.LifecyclePolicy`; consumers compose it into their orchestrator Dhall. See
 [`../documents/architecture/lifecycle_policy.md`](../documents/architecture/lifecycle_policy.md).
+
+The chart packages the same role, live, and lifecycle Dhall files under `chart/files/` and
+mounts them through the orchestrator/worker ConfigMaps.
 
 ## CLI surface
 

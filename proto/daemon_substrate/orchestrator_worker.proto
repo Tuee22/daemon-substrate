@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package daemon_substrate;
+
+import "daemon_substrate/workflow.proto";
+
+message OrchestratorToWorker {
+  string batch_id = 1;
+  string cohort = 2;
+  repeated WorkflowEvent events = 3;
+}
+
+message WorkerResult {
+  string request_id = 1;
+  string batch_id = 2;
+
+  oneof outcome {
+    SuccessPayload success = 3;
+    FailurePayload failure = 4;
+  }
+}
+
+message SuccessPayload {
+  bytes result_payload = 1;
+  string payload_type = 2;
+  ObjectRef output_object = 3;
+}
+
+message FailurePayload {
+  string reason = 1;
+  int32 attempt = 2;
+}

@@ -1,0 +1,231 @@
+cabal-version:      3.8
+name:               daemon-substrate
+version:            0.1.0.0
+synopsis:           Shared substrate library for stateless ML daemons
+description:
+  Shared Haskell substrate for Pulsar/MinIO-backed stateless ML daemon roles.
+license:            MIT
+license-file:       LICENSE
+author:             Tuee22
+maintainer:         Tuee22
+category:           Distributed Systems
+build-type:         Custom
+extra-source-files:
+  dhall/lifecycle-policy.dhall
+  dhall/orchestrator.dhall
+  dhall/live.dhall
+  dhall/worker.dhall
+  proto/daemon_substrate/audit.proto
+  proto/daemon_substrate/control.proto
+  proto/daemon_substrate/lifecycle.proto
+  proto/daemon_substrate/orchestrator_worker.proto
+  proto/daemon_substrate/workflow.proto
+  proto/daemon_substrate_test/mock.proto
+  proto/PulsarApi.proto
+
+custom-setup
+  setup-depends:
+      base >=4.21 && <4.22
+    , Cabal >=3 && <3.17
+    , proto-lens-setup >=0.4.0.10 && <0.5
+
+flag dev-werror
+  description: Treat warnings as errors during repository validation.
+  default:     False
+  manual:      True
+
+common common-opts
+  default-language: GHC2021
+  default-extensions:
+      BlockArguments
+      DerivingStrategies
+      GeneralizedNewtypeDeriving
+      OverloadedStrings
+  build-depends:
+      base >=4.21 && <4.22
+    , bytestring >=0.12 && <0.13
+    , containers >=0.7 && <0.8
+    , cryptohash-sha256 >=0.11.102 && <0.12
+    , dhall >=1.42 && <1.43
+    , directory >=1.3 && <1.4
+    , filepath >=1.5 && <1.6
+    , http-client >=0.7 && <0.8
+    , http-client-tls >=0.3 && <0.4
+    , http-types >=0.12 && <0.13
+    , lens-family >=2.1 && <2.2
+    , network >=3.2 && <3.3
+    , process >=1.6 && <1.7
+    , proto-lens >=0.7 && <0.8
+    , proto-lens-runtime >=0.7 && <0.8
+    , stm >=2.5 && <2.6
+    , text >=2.1 && <2.2
+    , time >=1.12 && <1.15
+    , transformers >=0.6 && <0.7
+    , unix >=2.8 && <2.9
+  ghc-options:
+      -Wall
+      -Wcompat
+
+  if flag(dev-werror)
+    ghc-options:
+      -Werror
+
+library
+  import:           common-opts
+  exposed-modules:
+      Daemon.Audit
+    , Daemon.Batching.Batcher
+    , Daemon.Batching.Hooks
+    , Daemon.Batching.Scheduler
+    , Daemon.Batching.Telemetry
+    , Daemon.Bridge
+    , Daemon.Bootstrap
+    , Daemon.Cluster.EdgePort
+    , Daemon.Cluster.Harbor
+    , Daemon.Cluster.Helm
+    , Daemon.Cluster.Kind
+    , Daemon.Cluster.MinIO
+    , Daemon.Cluster.Plan
+    , Daemon.Cluster.Pulsar
+    , Daemon.Cluster.Runner
+    , Daemon.Cluster.Storage
+    , Daemon.Cluster.Types
+    , Daemon.Cluster.Workload
+    , Daemon.Config
+    , Daemon.Config.BootConfig
+    , Daemon.Config.LifecyclePolicy
+    , Daemon.Config.LiveConfig
+    , Daemon.Consumer
+    , Daemon.Engine
+    , Daemon.Harbor
+    , Daemon.Kubectl
+    , Daemon.Lifecycle
+    , Daemon.Lifecycle.Endpoints
+    , Daemon.MinIO
+    , Daemon.MinIO.Admin
+    , Daemon.MinIO.Cache
+    , Daemon.MinIO.Store
+    , Daemon.MinIO.Subprocess
+    , Daemon.Orchestrator
+    , Daemon.Pulsar
+    , Daemon.Pulsar.Admin
+    , Daemon.Pulsar.Admin.Http
+    , Daemon.Reconciler
+    , Daemon.Pulsar.Native
+    , Daemon.Proto.Audit
+    , Daemon.Proto.Control
+    , Daemon.Proto.Lifecycle
+    , Daemon.Proto.Mock
+    , Daemon.Proto.OrchestratorWorker
+    , Daemon.Proto.PulsarApi
+    , Daemon.Proto.Workflow
+    , Daemon.Signal
+    , Daemon.Sub
+    , Daemon.Test.FilesystemHarbor
+    , Daemon.Test.FilesystemKubectl
+    , Daemon.Test.FilesystemMinIO
+    , Daemon.Test.FilesystemPulsar
+    , Daemon.Test.EchoEngines
+    , Daemon.Test.CLI
+    , Daemon.Test.CLI.Cluster
+    , Daemon.Test.CLI.Service
+    , Daemon.Test.CLI.Tests
+    , Daemon.Test.CLI.Types
+    , Daemon.Test.MockEngine
+    , Daemon.Topology.BatchedFanIn
+    , Daemon.Topology.BatchedFanOut
+    , Daemon.Topology.FanIn
+    , Daemon.Topology.FanOut
+    , Daemon.Topology.Pipeline
+    , Daemon.Topology.RequestResponse
+    , Daemon.Topology.Stream
+    , Daemon.Topology.Types
+    , Daemon.Worker
+    , Daemon.WorkflowState
+    , Daemon.Wire.Audit
+    , Daemon.Wire.Control
+    , Daemon.Wire.Lifecycle
+    , Daemon.Wire.OrchestratorWorker
+    , Daemon.Wire.Workflow
+  hs-source-dirs:   src
+  build-tool-depends:
+      proto-lens-protoc:proto-lens-protoc >=0.9 && <0.10
+  autogen-modules:
+      Proto.DaemonSubstrate.Audit
+    , Proto.DaemonSubstrate.Audit_Fields
+    , Proto.DaemonSubstrate.Control
+    , Proto.DaemonSubstrate.Control_Fields
+    , Proto.DaemonSubstrate.Lifecycle
+    , Proto.DaemonSubstrate.Lifecycle_Fields
+    , Proto.DaemonSubstrate.OrchestratorWorker
+    , Proto.DaemonSubstrate.OrchestratorWorker_Fields
+    , Proto.DaemonSubstrate.Workflow
+    , Proto.DaemonSubstrate.Workflow_Fields
+    , Proto.DaemonSubstrateTest.Mock
+    , Proto.DaemonSubstrateTest.Mock_Fields
+    , Proto.PulsarApi
+    , Proto.PulsarApi_Fields
+  other-modules:
+      Daemon.Pulsar.Native.Compression
+    , Daemon.Pulsar.Native.Connection
+    , Daemon.Pulsar.Native.Consumer
+    , Daemon.Pulsar.Native.Frame
+    , Daemon.Pulsar.Native.Lookup
+    , Daemon.Pulsar.Native.Producer
+    , Proto.DaemonSubstrate.Audit
+    , Proto.DaemonSubstrate.Audit_Fields
+    , Proto.DaemonSubstrate.Control
+    , Proto.DaemonSubstrate.Control_Fields
+    , Proto.DaemonSubstrate.Lifecycle
+    , Proto.DaemonSubstrate.Lifecycle_Fields
+    , Proto.DaemonSubstrate.OrchestratorWorker
+    , Proto.DaemonSubstrate.OrchestratorWorker_Fields
+    , Proto.DaemonSubstrate.Workflow
+    , Proto.DaemonSubstrate.Workflow_Fields
+    , Proto.DaemonSubstrateTest.Mock
+    , Proto.DaemonSubstrateTest.Mock_Fields
+    , Proto.PulsarApi
+    , Proto.PulsarApi_Fields
+
+executable daemon-substrate-test
+  import:           common-opts
+  main-is:          Main.hs
+  hs-source-dirs:   app/test
+  build-depends:
+      daemon-substrate
+  ghc-options:
+      -threaded
+      -rtsopts
+      -with-rtsopts=-N
+
+test-suite daemon-substrate-unit
+  import:           common-opts
+  type:             exitcode-stdio-1.0
+  main-is:          Main.hs
+  hs-source-dirs:   test/unit
+  build-depends:
+      daemon-substrate
+
+test-suite daemon-substrate-lifecycle
+  import:           common-opts
+  type:             exitcode-stdio-1.0
+  main-is:          Main.hs
+  hs-source-dirs:   test/lifecycle
+  build-depends:
+      daemon-substrate
+
+test-suite daemon-substrate-integration
+  import:           common-opts
+  type:             exitcode-stdio-1.0
+  main-is:          Main.hs
+  hs-source-dirs:   test/integration
+  build-depends:
+      daemon-substrate
+
+test-suite daemon-substrate-haskell-style
+  import:           common-opts
+  type:             exitcode-stdio-1.0
+  main-is:          Main.hs
+  hs-source-dirs:   test/haskell-style
+  build-depends:
+      daemon-substrate

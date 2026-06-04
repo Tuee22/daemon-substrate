@@ -10,10 +10,10 @@
 
 ## Phase Status
 
-**Status**: Active
+**Status**: Done
 **Implementation**: documentation only
-**Remaining work**: doc validator implementation (deferred to a later phase); progressive
-filling-in of placeholder sprint detail as the relevant later phases open.
+**Remaining work**: none. Sprint 0.5 remains intentionally deferred to Phase 8 Sprint 8.5 and
+does not block Phase 0 closure.
 
 ## Phase Objective
 
@@ -88,9 +88,9 @@ deferred to Sprint 0.5.)
 
 (none)
 
-### Sprint 0.3: Documents tree population [Active]
+### Sprint 0.3: Documents tree population [Done]
 
-**Status**: Active
+**Status**: Done
 **Implementation**: `documents/README.md`, `documents/architecture/`, `documents/engineering/`,
 `documents/development/`, `documents/operations/`, `documents/reference/`
 **Docs to update**: same paths
@@ -128,12 +128,11 @@ file in this sprint or is explicitly forward-referenced to a later phase.
 
 #### Remaining Work
 
-Detail-level revisions land as later phases tighten the implementation (e.g.
-`engineering/cabal_layout.md` is provisional until the cabal file itself exists in Phase 1).
+(none)
 
-### Sprint 0.4: Development plan tree population [Active]
+### Sprint 0.4: Development plan tree population [Done]
 
-**Status**: Active
+**Status**: Done
 **Implementation**: `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`,
 `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`,
 the eight phase files
@@ -167,7 +166,7 @@ Every phase file carries `Status`, `Phase Status`, `Phase Objective`, `Sprints`,
 
 #### Remaining Work
 
-Per-sprint detail inside each phase file fills out as that phase opens.
+(none)
 
 ### Sprint 0.5: Doc validator [Deferred — owned by Phase 8 Sprint 8.5]
 
@@ -195,9 +194,9 @@ reference to that closure.
 set flip this sprint (0.5) to `Done` and update Phase 0's overall status accordingly. Do not
 merge the Phase 8 Sprint 8.5 change set without including the Phase 0 status updates.
 
-### Sprint 0.6: hostbootstrap re-baseline [Active]
+### Sprint 0.6: hostbootstrap re-baseline [Done]
 
-**Status**: Active
+**Status**: Done
 **Implementation**: `documents/engineering/hostbootstrap_integration.md`, root docs,
 `documents/` runbooks and standards, `DEVELOPMENT_PLAN/` overview / standards /
 system-components, phases 1 / 5 / 6 / 7, `legacy-tracking-for-deletion.md`
@@ -249,7 +248,7 @@ bootstrap layer only.
 
 #### Remaining Work
 
-(scoped when the sprint opens)
+(none)
 
 ## Documentation Requirements
 

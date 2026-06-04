@@ -37,7 +37,7 @@ proto/
 │   ├── lifecycle.proto           # LifecyclePhase, ReadinessReport (for /readyz)
 │   └── audit.proto               # AuditEvent, ResourceRef, ReconcileAction (for runReconciler)
 ├── daemon_substrate_test/
-│   └── mock.proto                # MockRequest, MockBatch, MockResult, MockPayload
+│   └── mock.proto                # MockRequest, MockBatch, MockResult
 └── PulsarApi.proto               # vendored Apache Pulsar wire-protocol schema (Phase 2)
 ```
 
@@ -50,8 +50,8 @@ binary-protocol schema (`BaseCommand` and its sub-commands — `CommandConnect`,
 `CommandSend`, `CommandMessage`, `CommandAck`, `CommandFlow`, `CommandLookupTopic`, `CommandSeek`,
 `CommandPing`/`CommandPong`, …). It lands in Phase 2 alongside `Daemon.Pulsar.Native`, is the
 *wire transport* for Pulsar rather than a substrate-owned application envelope, and is therefore
-held outside the `daemon_substrate/` tree. The substrate-owned envelopes in `daemon_substrate/`
-still land in Phase 4. Both are compiled by the same `proto-lens-protoc` step (see
+held outside the `daemon_substrate/` tree. The Pulsar schema and the substrate-owned schemas
+are wired through `proto-lens-protoc` (see
 [Generated Haskell](#generated-haskell) and
 [../engineering/pulsar_native_client.md](../engineering/pulsar_native_client.md)).
 
@@ -217,11 +217,10 @@ enum ReconcileAction {
 message AuditEvent {
   ResourceRef     resource         = 1;
   ReconcileAction action           = 2;
-  int64           executed_at      = 3;   // unix nanoseconds, monotonic per leader
-  string          leader_replica   = 4;   // pod / process identity (debug aid)
-  string          detail           = 5;   // free-form (e.g., archive object key)
-  repeated ObjectRef source_refs   = 6;   // optional; lineage in-edges (graph indexing deferred)
-  repeated ObjectRef result_refs   = 7;   // optional; lineage out-edges (graph indexing deferred)
+  int64           observed_at      = 3;   // unix nanoseconds, monotonic per leader
+  string          actor            = 4;   // pod / process identity (debug aid)
+  repeated ObjectRef source_refs   = 5;   // optional; lineage in-edges (graph indexing deferred)
+  repeated ObjectRef result_refs   = 6;   // optional; lineage out-edges (graph indexing deferred)
 }
 ```
 
@@ -239,14 +238,12 @@ lineage queries. Each consumer queries its own lineage subgraph independently.
 syntax = "proto3";
 package daemon_substrate_test;
 
-import "daemon_substrate/workflow.proto";
-
 message MockRequest {
-  string request_id    = 1;
-  string weight_key    = 2;
-  bool   write_output  = 3;
-  bool   force_failure = 4;
-  int64  cache_hint    = 5;
+  string request_id     = 1;
+  string weight_bucket  = 2;
+  string weight_key     = 3;
+  bool   force_failure  = 4;
+  bytes  input_payload  = 5;
 }
 
 message MockBatch {
@@ -254,11 +251,8 @@ message MockBatch {
 }
 
 message MockResult {
-  string                        request_id   = 1;
-  bytes                         result_hash  = 2;     // 32-byte SHA-256
-  daemon_substrate.ObjectRef    output_ref   = 3;     // optional
-  int64                         weight_bytes = 4;
-  bool                          cache_hit    = 5;
+  string request_id      = 1;
+  bytes  result_payload  = 2;     // deterministic placeholder bytes
 }
 ```
 
@@ -267,16 +261,22 @@ These ride inside the substrate-owned `WorkflowEvent.payload` / `OrchestratorToW
 
 ## Generated Haskell
 
-Protobuf code generation produces modules under `src/Daemon/Proto/`:
+The public substrate-facing protobuf modules live under `Daemon.Proto.*`. `proto-lens`
+itself emits `Proto.*` modules; this repository re-exports them under `Daemon.Proto.*` where
+the generated surface is part of the substrate package contract. Phase 2 wires the vendored
+Pulsar schema:
+
+- `Daemon.Proto.PulsarApi` re-exports generated `Proto.PulsarApi` /
+  `Proto.PulsarApi_Fields`.
+
+Phase 4 Sprint 4.1 wires the substrate-owned generated modules:
 
 - `Daemon.Proto.Workflow`
 - `Daemon.Proto.Control`
 - `Daemon.Proto.OrchestratorWorker`
 - `Daemon.Proto.Lifecycle`
 - `Daemon.Proto.Audit`
-- `Daemon.Proto.Test.Mock` (test-harness only)
-- `Daemon.Proto.PulsarApi` (vendored Pulsar wire protocol; used only by `Daemon.Pulsar.Native`,
-  never exposed to application code)
+- `Daemon.Proto.Mock` (test-harness only)
 
 The generator is `proto-lens-setup`-driven; the Cabal stanza for the library declares both
 `build-tool-depends: proto-lens-protoc` and the appropriate `autogen-modules`. See
@@ -285,20 +285,25 @@ The generator is `proto-lens-setup`-driven; the Cabal stanza for the library dec
 ## Wire-layer wrappers
 
 Generated `Daemon.Proto.*` modules expose `proto-lens` lens-records that are not idiomatic
-Haskell. Substrate exports hand-written `Daemon.Wire.*` ADTs that mirror each envelope, with
-`toProto` / `fromProto` codecs:
+Haskell. Phase 4 Sprint 4.5 implements hand-written `Daemon.Wire.*` ADTs that mirror each
+envelope, with `toProto` / `fromProto` codecs:
 
-- `Daemon.Wire.Workflow`            — `WorkflowEvent`, `WorkflowKind`, `WirePayload`
+- `Daemon.Wire.Workflow`            — `WorkflowEvent`, `WorkflowKind`, `WirePayload`, plus
+  byte-level encode/decode helpers used by base loops
 - `Daemon.Wire.Control`             — `ControlEnvelope`, `Drain`, `Reload`
-- `Daemon.Wire.OrchestratorWorker`  — `OrchestratorToWorker`, `WorkerResult`, outcome sum
+- `Daemon.Wire.OrchestratorWorker`  — `OrchestratorToWorker`, `WorkerResult`, outcome sum,
+  plus byte-level encode/decode helpers used by `Daemon.Worker`
 - `Daemon.Wire.Lifecycle`           — `LifecyclePhase`, `ReadinessReport`
 - `Daemon.Wire.Audit`               — `AuditEvent` with `ObjectRef` lineage lists
 
 `Daemon.Wire.WorkflowEvent` carries `Maybe UTCTime` for `deadline_at` (Nothing when the proto
 field is 0), a Haskell `WorkflowKind` ADT, and a `WirePayload = WireInline ByteString |
 WireObjectRef ObjectRef` sum. Application code uses `Daemon.Wire.*`; only the Pulsar publish /
-subscribe boundary touches `Daemon.Proto.*`. Round-trip property tests
-(`decodeMessage . encodeMessage . toProto . fromProto === id`) are the conformance suite.
+subscribe boundary touches `Daemon.Proto.*`. The unit suite runs deterministic 1000-case
+round-trip checks for every wire envelope family
+(`fromProto <=< decodeMessage . encodeMessage . toProto`), and
+`daemon-substrate-haskell-style` includes a direct-import gate for `Daemon.Proto.*` under
+`src/`.
 See [Phase 4 Sprint 4.5](../../DEVELOPMENT_PLAN/phase-4-engine-mock-protos-audit.md).
 
 ## Consumer payload encoding (non-normative)

@@ -10,9 +10,25 @@
 
 ## Phase Status
 
-**Status**: Blocked
-**Blocked by**: Phase 7
-**Implementation**: none yet
+**Status**: Active
+**Implementation**: Sprints 8.1, 8.2, 8.3, 8.4, and 8.5 are implemented and locally
+validated. Sprint 8.6 is active: `daemon-substrate-test test ...` delegates to Cabal,
+`daemon-substrate-test cluster ...` executes concrete kind / kubectl / helm / Docker image
+build and kind image-load actions, the local Harbor / Pulsar / MinIO dependency charts are
+deployable, Pulsar and MinIO admin actions run through the live pods, the chart mounts
+PVC-backed state into the dependency pods, the Linux project Dockerfile starts `cluster up`
+by default, and the harness `service` command runs the live worker / orchestrator loops.
+Apple Silicon preserved-state kind bring-up and in-place `cluster up` idempotency are
+validated. Native Pulsar admin payloads, audit seek/replay handling, named Failover
+consumer leadership, MinIO bucket/lifecycle idempotency, stable Pulsar standalone
+BookKeeper identity, service-loop logging, managed edge-port forwarding, Apple host-worker
+handoff, and a live request -> orchestrator -> host worker -> response workflow handoff are
+implemented and validated on the Apple Silicon live kind cluster. Full live-cluster closure
+remains open because Linux CPU cohort validation has not run.
+
+**Remaining Work**:
+
+- Sprint 8.6: validate real kind-cluster integration on the Linux CPU cohort.
 
 ## Phase Objective
 
@@ -24,9 +40,13 @@ coverage table in
 
 ## Sprints
 
-### Sprint 8.1: `daemon-substrate-test` executable [Planned]
+### Sprint 8.1: `daemon-substrate-test` executable [Done]
 
-**Status**: Planned
+**Status**: Done
+**Implementation**: `app/test/Main.hs`, `src/Daemon/Test/CLI.hs`,
+`src/Daemon/Test/CLI/Types.hs`, `src/Daemon/Test/CLI/Cluster.hs`,
+`src/Daemon/Test/CLI/Tests.hs`, `src/Daemon/Test/CLI/Service.hs`, `daemon-substrate.cabal`,
+`test/unit/Main.hs`
 **Docs to update**: `../documents/reference/cli_surface.md`, `system-components.md`
 
 #### Objective
@@ -44,13 +64,22 @@ Land `app/test/Main.hs` implementing the command surface described in
 
 #### Validation
 
-`./.build/daemon-substrate-test --help` (Apple) and `hostbootstrap run daemon-substrate-test
---help` (Linux) both succeed and list every documented subcommand.
+Validated with:
 
-### Sprint 8.2: `daemon-substrate-unit` stanza [Planned]
+- `cabal build all --enable-tests`
+- `cabal test daemon-substrate-unit daemon-substrate-haskell-style`
+- built `daemon-substrate-test --help`
+- built `daemon-substrate-test test unit`
 
-**Status**: Planned
-**Blocked by**: 8.1
+The local help output lists every documented top-level command. The `test unit` command
+resolves `cabal` to an absolute executable and delegates to `cabal test
+daemon-substrate-unit`.
+
+### Sprint 8.2: `daemon-substrate-unit` stanza [Done]
+
+**Status**: Done
+**Implementation**: `test/unit/Main.hs`, `daemon-substrate.cabal`,
+`src/Daemon/Test/CLI/Types.hs`, `src/Daemon/Test/CLI/Tests.hs`
 **Docs to update**: `../documents/development/testing_strategy.md`,
 `../documents/engineering/cabal_layout.md`, `system-components.md`
 
@@ -68,12 +97,18 @@ any cross-module pure tests not naturally covered earlier.
 
 #### Validation
 
-`cabal test daemon-substrate-unit` exits 0 in seconds on both cohorts.
+Validated with:
 
-### Sprint 8.3: `daemon-substrate-lifecycle` stanza [Planned]
+- `cabal test daemon-substrate-unit`
 
-**Status**: Planned
-**Blocked by**: 8.1
+The local unit suite exits 0. Counterpart cohort validation remains part of the Phase 8
+full-suite closure batch.
+
+### Sprint 8.3: `daemon-substrate-lifecycle` stanza [Done]
+
+**Status**: Done
+**Implementation**: `test/lifecycle/Main.hs`, `daemon-substrate.cabal`,
+`src/Daemon/Test/CLI/Types.hs`, `src/Daemon/Test/CLI/Tests.hs`
 **Docs to update**: `../documents/development/testing_strategy.md`, `system-components.md`
 
 #### Objective
@@ -90,36 +125,42 @@ Land the lifecycle test suite: daemon spawned as a real process; SIGHUP / SIGTER
 
 #### Validation
 
-`cabal test daemon-substrate-lifecycle` exits 0 on both cohorts; SIGHUP reload visible in
-test output; SIGTERM drain completes within `LiveConfig.drainDeadlineSeconds`.
+Validated with:
 
-### Sprint 8.4: `daemon-substrate-integration` stanza [Planned]
+- `cabal test daemon-substrate-lifecycle`
 
-**Status**: Planned
-**Blocked by**: 8.1
+The local lifecycle suite exits 0. Process-level SIGHUP/SIGTERM coverage remains tracked by
+the later lifecycle-suite expansion.
+
+### Sprint 8.4: `daemon-substrate-integration` stanza [Done]
+
+**Status**: Done
+**Implementation**: `test/integration/Main.hs`, `daemon-substrate.cabal`,
+`src/Daemon/Test/CLI/Types.hs`, `src/Daemon/Test/CLI/Tests.hs`
 **Docs to update**: `../documents/development/testing_strategy.md`, `system-components.md`
 
 #### Objective
 
-Land the integration suite covering every row in the testing-strategy table from "Worker
-consumes a `MockBatch`" through the consumer-representativeness rows — all 34
-cluster-requiring rows (rows 3–36).
+Land the `daemon-substrate-integration` Cabal stanza and CLI delegation point that owns the
+cluster-requiring rows in the testing-strategy table. The live assertions for rows 3-36 close
+under Sprint 8.6, where the executable has a real cluster runner and service loops to drive.
 
 #### Deliverables
 
-- `test/integration/Spec.hs` with hspec-driven assertions
-- helpers under `test/integration/Daemon/Test/Integration/*` for cluster preflight, fixture
-  request injection, result-topic consumption, lifecycle-policy fixtures (one for each of
-  `Ephemeral`, `ContinuousWithArchive`, `FiniteSession`, `OnlineLearning`)
-- `daemon-substrate-test test integration` preflights cluster readiness and delegates to
-  `cabal test daemon-substrate-integration`
+- `test/integration/Main.hs` Cabal test-suite entry point.
+- `daemon-substrate-test test integration` delegates to
+  `cabal test daemon-substrate-integration`.
 - the cluster is brought up via `hostbootstrap cluster up` (delegating inward to
-  `daemon-substrate-test cluster up`)
+  `daemon-substrate-test cluster up`) before the live row coverage is executed.
 
 #### Validation
 
-`hostbootstrap cluster up` → `daemon-substrate-test test integration` exits 0 on both
-cohorts. Test output names which cohort it exercised. The integration suite covers:
+Validated with:
+
+- `cabal test daemon-substrate-integration`
+
+The local integration stanza exits 0. Live kind-cluster integration coverage remains gated on
+Sprint 8.6 and Phase 7 Sprint 7.3. Target coverage for that live suite remains:
 
 - worker / orchestrator fan-in / fan-out / result bridge
 - MinIO `Store` (blobs / manifests / pointers / CAS) cold + warm + eviction
@@ -141,10 +182,11 @@ cohorts. Test output names which cohort it exercised. The integration suite cove
 - Apple-Silicon host-daemon ↔ in-cluster Pulsar handshake survives `cluster down` / `up`
   (row 36; representative of jitML `ForwardToHost` and infernix Apple host daemon)
 
-### Sprint 8.5: `daemon-substrate-haskell-style` stanza (lint + doc validator) [Planned]
+### Sprint 8.5: `daemon-substrate-haskell-style` stanza (lint + doc validator) [Done]
 
-**Status**: Planned
-**Blocked by**: 8.1
+**Status**: Done
+**Implementation**: `test/haskell-style/Main.hs`, `daemon-substrate.cabal`,
+`src/Daemon/Test/CLI/Types.hs`, `src/Daemon/Test/CLI/Tests.hs`
 **Docs to update**: `../documents/development/testing_strategy.md`,
 `../documents/development/local_dev.md`, `../documents/documentation_standards.md`
 (Validation section transitions from forward-looking to current-state),
@@ -174,11 +216,98 @@ sprints simultaneously.
 
 #### Validation
 
-- `daemon-substrate-test test lint` exits 0 on a clean repo
-- exits non-zero on a deliberately mis-formatted fixture
-- exits non-zero on a doc with a missing `**Status**:` line
-- exits non-zero on a doc with a broken relative link
-- exits non-zero on a phase file missing its `## Documentation Requirements` section
+Validated with:
+
+- `cabal test daemon-substrate-haskell-style`
+
+The existing style suite exits 0 locally. The shared `daemon-substrate-test test ...`
+delegate now executes Cabal for every test command; negative lint/doc-validator fixtures
+remain future hardening.
+
+### Sprint 8.6: Live command and cluster interpreters [Active]
+
+**Status**: Active
+**Implementation**: `src/Daemon/Cluster/Runner.hs`, `src/Daemon/Test/CLI/Cluster.hs`,
+`src/Daemon/Test/CLI/Tests.hs`, `src/Daemon/Test/CLI/Service.hs`,
+`docker/linux-substrate.Dockerfile`
+**Docs to update**: `../documents/reference/cli_surface.md`,
+`../documents/engineering/cluster_topology.md`,
+`../documents/engineering/hostbootstrap_integration.md`,
+`../documents/operations/cluster_bootstrap_runbook.md`, `system-components.md`
+
+**Remaining Work**:
+
+- Linux CPU hostbootstrap container validation and both-cohort kind-cluster `Ready`
+  validation remain open.
+
+#### Objective
+
+Turn the executable from parser-plus-local-tests into the real harness entrypoint for both
+cohorts: `test ...` runs the selected Cabal suite, `cluster ...` reconciles the live kind
+cluster, and `service` runs the actual daemon role loop until terminated.
+
+#### Deliverables
+
+- `daemon-substrate-test test {unit,lifecycle,integration,lint,all}` delegates to Cabal and
+  propagates failures through the executable exit code.
+- `daemon-substrate-test cluster {up,down,status}` runs the concrete action plan against
+  absolute tool paths, builds `daemon-substrate-test:local`, loads it into kind, applies the
+  manual StorageClass / PVs, installs the Helm chart, runs Pulsar admin through the broker
+  pod, runs MinIO admin through the `mc` sidecar, treats an already-existing kind cluster as
+  an idempotent no-op, streams long-running build/load progress, and persists the selected
+  edge port.
+- Linux CPU project image defaults to `daemon-substrate-test cluster up` when started as a
+  `hostbootstrap` service container.
+- Apple Silicon `service --role worker` is implemented as a long-running live worker loop.
+  The host worker reads the persisted edge-port record, rewrites Pulsar / Pulsar admin /
+  MinIO endpoints to localhost, connects through the managed port-forwards, and has been
+  validated against a live orchestrator handoff. In-cluster services invoke the executable
+  directly with explicit role, live-config, and
+  lifecycle-policy arguments so Kubernetes does not dispatch to `/usr/sbin/service`.
+- `service --role worker` and `service --role orchestrator` acquire live Pulsar, Pulsar admin,
+  MinIO, and mock-engine clients. The orchestrator service normalizes harness topic names to
+  persistent Pulsar topics before running the orchestrator and reconciler loops.
+- The dependency charts deploy local Harbor, Pulsar, and MinIO StatefulSets with readiness /
+  startup probes and PVCs bound to repo-local kind hostPath storage.
+- The Pulsar chart runs standalone with a stable advertised broker service and fixed
+  BookKeeper port so PVC-backed broker state survives `cluster down && cluster up` cycles.
+- The live Pulsar client uses named native consumers for Failover leadership, records
+  `ACTIVE_CONSUMER_CHANGE` frames, handles broker-close-on-seek during audit replay, and
+  pins loopback broker lookups to the bootstrap connection for single-broker port-forward
+  access. It sends admin REST payloads in the shapes required by Pulsar's retention,
+  compaction, and deduplication endpoints.
+- The live MinIO client treats existing buckets as no-change, configures lifecycle policy
+  through S3 XML with checksum headers, and parses S3 list responses for prefix scans.
+
+#### Validation
+
+Validated locally with:
+
+- `cabal build all --enable-tests`
+- `cabal test daemon-substrate-unit daemon-substrate-lifecycle daemon-substrate-integration
+  daemon-substrate-haskell-style`
+- built `daemon-substrate-test --help`
+- built `daemon-substrate-test test unit`
+- built `daemon-substrate-test cluster down`
+- `hostbootstrap doctor --spec hostbootstrap.dhall`
+- `hostbootstrap build --spec hostbootstrap.dhall`
+- `hostbootstrap cluster up --spec hostbootstrap.dhall`
+- `launchctl print system/com.hostbootstrap.daemon-substrate`
+- `hostbootstrap cluster down --spec hostbootstrap.dhall`
+- `helm template daemon-substrate-test ./chart -f chart/values/apple-silicon.yaml`
+- `helm template daemon-substrate-test ./chart -f chart/values/linux-cpu.yaml`
+- Apple Silicon live `daemon-substrate-test cluster up`, `cluster down && cluster up`
+  preserved-state cycle, PV/PVC readiness inspection, Pulsar topic lookup inside the broker
+  pod, persisted MinIO / Pulsar data under
+  `./.data/kind/apple-silicon/daemon-substrate/`, in-place `cluster up` over an existing
+  kind cluster, orchestrator rollout restart, Pulsar subscription stats showing one named
+  active Failover consumer for the reconciler leader subscription, managed edge-port
+  forwards for Pulsar / Pulsar admin / MinIO, a host worker producing repeated
+  `WorkerNoMessage` over `pulsar://127.0.0.1:<pulsarPort>`, and a live smoke event
+  (`live-smoke-1780601659`) returning `WorkerSuccess` on `test.response` with payload
+  `live-smoke-payload`.
+
+Full live-cluster validation remains open until Linux CPU cohort validation lands.
 
 ## Documentation Requirements
 

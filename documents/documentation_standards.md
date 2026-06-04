@@ -155,6 +155,11 @@ Rules:
 
 ## Validation
 
+Current implementation note: `daemon-substrate-haskell-style` is implemented as a local style
+suite and passes in Phase 8 Sprint 8.5. Negative fixture checks and live
+`daemon-substrate-test test lint` delegation remain tracked by Phase 8 phase-level remaining
+work.
+
 The documentation validator owned by Phase 0 of `DEVELOPMENT_PLAN/` checks:
 
 - required metadata lines for governed `documents/` content

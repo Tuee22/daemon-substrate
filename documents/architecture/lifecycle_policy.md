@@ -14,9 +14,9 @@
 - `daemon-substrate` owns the full lifecycle of every Pulsar topic and MinIO bucket / object the
   substrate plumbing uses. Consumers declare desired state in a typed Dhall `LifecyclePolicy`;
   the substrate reconciles to it.
-- The **orchestrator** daemon runs the reconciler as a **fifth concurrent base loop**
-  (`runReconciler`) alongside `runOrchestrator`'s fan-in / batch / fan-out / bridge work. Same
-  binary, same Deployment.
+- The **orchestrator** daemon runs the reconciler as a concurrent base loop through
+  `runOrchestratorWithReconciler`, which combines `runOrchestrator` and `runReconciler` in the
+  same binary and Deployment.
 - Multiple orchestrator replicas are safe — exactly **one is the active reconciler** at a time
   via a Pulsar **Failover subscription** on a control topic. Standbys block; on leader death,
   Pulsar promotes a survivor.
@@ -40,9 +40,14 @@ CLI, never the operator. The reconciler is part of the orchestrator binary becau
 - The orchestrator already has every capability the reconciler needs (`HasPulsar` for topic
   admin + audit topic; `HasMinIO` for bucket admin + orphan scan).
 
-`runReconciler` runs as a separate thread inside the orchestrator process, concurrent with
-`runOrchestrator`'s workload handling. They share the substrate capabilities; they do not
-share mutable state.
+`runOrchestratorWithReconciler` runs `runReconciler` as a separate thread inside the
+orchestrator process, concurrent with `runOrchestrator`'s workload handling. They share the
+substrate capabilities; they do not share mutable state.
+
+The current `Daemon.Reconciler` module provides the leader-acquire plus one-tick
+reconciliation surface used by the base loop: replay audit state, idempotently create/configure
+declared Pulsar topics and MinIO buckets, audit changed resources, and perform filesystem
+test-backend orphan cleanup for declared blob prefixes.
 
 ## Race-freedom across N replicas
 
@@ -205,7 +210,7 @@ let BucketLifecycle =
           < Never
           | EveryHours :
               { interval        : Natural
-              , safetyWindowMin : Natural
+              , safetyWindowMin : Optional Natural
               }
           >
       , reachableFromPointers   : List Text
@@ -270,7 +275,11 @@ and telemetry surface.
 `BatchingPolicy` and `SchedulerPolicy` are part of `LiveConfig` (SIGHUP-reloadable), not
 `LifecyclePolicy`. Batch sizing and scheduling weights are tuned at runtime against observed
 workload; topic and bucket lifecycles are structural and change on different cadences. The
-two surfaces are intentionally separate.
+two surfaces are intentionally separate. The Dhall decode surface for these policies is
+implemented in `Daemon.Config.LiveConfig`; the pure runtime batcher and scheduler that
+consume the policies are implemented in `Daemon.Batching.Batcher` and
+`Daemon.Batching.Scheduler`. The later orchestrator base-loop sprint wires those pure
+primitives into Pulsar fan-in / fan-out.
 
 The `WorkflowEvent.deadline_at` field (see [../reference/proto_surface.md](../reference/proto_surface.md))
 is the substrate-level deadline carrier; the batcher honors it for force-flush decisions and
@@ -297,22 +306,33 @@ drops expired requests with typed telemetry.
   checkpoints) so eviction cannot reclaim them mid-request. Pinning is process-local and
   non-durable; on daemon restart the pin set is empty until the consumer re-asserts.
 - `Daemon.Config.LifecyclePolicy` — Dhall decoders for the policy types above.
-- `Daemon.Audit` — compacted-topic helper: keyed write + replay-on-startup.
+  `safetyWindowMin = None Natural` decodes to the default 60-minute safety window.
+- `Daemon.Audit` — compacted-topic helper: `auditPublish` writes generated `AuditEvent`
+  protobuf messages keyed as `<kind>:<id>`, and `auditReplay` consumes from earliest to build
+  the latest `Map ResourceRef ReconcileAction` per resource. Hand-written wire ADTs land in
+  Phase 4 Sprint 4.5; until then this helper intentionally uses the generated
+  `Daemon.Proto.Audit` types at the audit boundary.
 - `Daemon.Reconciler` — the leader-elected reconciliation loop:
 
 ```haskell
 runReconciler
-  :: (HasPulsar m, HasMinIO m)
-  => BootConfig 'Orchestrator app
-  -> LifecyclePolicy
-  -> m ()
+  :: (HasPulsar m, HasPulsarAdmin m, HasMinIOAdmin m)
+  => LifecyclePolicy
+  -> m (Either ReconcilerError ReconcileReport)
+
+runOrchestratorWithReconciler
+  :: IO (Either OrchestratorError OrchestratorStepResult)
+  -> IO (Either ReconcilerError ReconcileReport)
+  -> IO ConcurrentLoopResult
 ```
 
 ## Concurrency contract
 
-`runOrchestrator` and `runReconciler` run as two concurrent threads inside the same orchestrator
-process. They share the `HasPulsar` / `HasMinIO` / `HasHarbor` capabilities; they do not share
-mutable state.
+`runOrchestratorWithReconciler` runs `runOrchestrator` and `runReconciler` as two concurrent
+threads inside the same orchestrator process. They share the `HasPulsar` / `HasMinIO` /
+`HasHarbor` capabilities; they do not share mutable state. The helper preserves each loop's
+typed result and captures unexpected thread exceptions as text so one failed loop does not
+erase the other loop's outcome.
 
 The reconciler **never** modifies an in-flight Pulsar message or a freshly-written MinIO
 object. Its operations are scoped to admin (topic create / delete / configure, bucket create /

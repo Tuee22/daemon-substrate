@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-harbor
+spec:
+  serviceName: {{ .Release.Name }}-harbor
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: harbor
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: harbor
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-harbor-data
+      containers:
+        - name: harbor
+          image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+          ports:
+            - name: registry
+              containerPort: 5000
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/registry
+          startupProbe:
+            httpGet:
+              path: /v2/
+              port: registry
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /v2/
+              port: registry
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 6

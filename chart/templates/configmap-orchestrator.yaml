@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "daemon-substrate-test.orchestratorConfigName" . }}
+  labels:
+    {{- include "daemon-substrate-test.labels" . | nindent 4 }}
+data:
+  orchestrator.dhall: |
+{{ default .Values.config.orchestratorDhall (.Files.Get "files/orchestrator.dhall") | indent 4 }}
+  live.dhall: |
+{{ .Files.Get "files/live.dhall" | indent 4 }}
+  lifecycle-policy.dhall: |
+{{ .Files.Get "files/lifecycle-policy.dhall" | indent 4 }}

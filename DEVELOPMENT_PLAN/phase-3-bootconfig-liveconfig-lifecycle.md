@@ -11,9 +11,12 @@
 
 ## Phase Status
 
-**Status**: Blocked
-**Blocked by**: Phase 2
-**Implementation**: none yet
+**Status**: Done
+**Implementation**: Sprints 3.1 through 3.6 are implemented and validated.
+
+**Remaining Work**:
+
+none
 
 ## Phase Objective
 
@@ -27,10 +30,30 @@ But every base-loop sprint in Phase 5 reads from the lifecycle scaffolding, so i
 
 ## Sprints
 
-### Sprint 3.1: `BootConfig role app` + Dhall decoder [Planned]
+### Sprint 3.1: `BootConfig role app` + Dhall decoder [Done]
 
-**Status**: Planned
+**Status**: Done
 **Docs to update**: `documents/architecture/library_consumption_model.md`, `system-components.md`
+
+**Implementation**:
+
+- `src/Daemon/Config/BootConfig.hs` defines `BootConfig role app`, `Role`, role marker types,
+  defaulted `maxInlinePayloadBytes`, and role-specific plus generic Dhall decode helpers.
+- `src/Daemon/Config.hs` re-exports the BootConfig surface.
+- `dhall/orchestrator.dhall` and `dhall/worker.dhall` are BootConfig stubs; later Phase 3
+  sprints extend the Dhall files with `LiveConfig` and `LifecyclePolicy`.
+- `test/unit/Main.hs` covers decode round-trip, schema mismatch failing closed, role tag
+  enforcement, file decode for both stubs, and omitted `maxInlinePayloadBytes` defaulting.
+
+**Validation**:
+
+- `cabal check` passes with only the existing no-source-repository warning.
+- `cabal build all` passes.
+- `cabal build all --enable-tests` passes.
+- `cabal test daemon-substrate-unit` passes.
+- Documentation metadata validation passes.
+
+**Remaining Work**: none
 
 #### Objective
 
@@ -52,11 +75,31 @@ externalizing it. See
 - unit tests covering: decode round-trip, schema mismatch fails closed, role tag enforcement,
   `maxInlinePayloadBytes` default value used when field omitted
 
-### Sprint 3.2: `LiveConfig` + SIGHUP reload [Planned]
+### Sprint 3.2: `LiveConfig` + SIGHUP reload [Done]
 
-**Status**: Planned
-**Blocked by**: 3.1
+**Status**: Done
 **Docs to update**: `documents/architecture/library_consumption_model.md`, `system-components.md`
+
+**Implementation**:
+
+- `src/Daemon/Config/LiveConfig.hs` defines retry, dedup-cache, drain-deadline,
+  `BatchingPolicy`, `SchedulerPolicy`, `FlushStrategy`, `BackpressureMode`, and
+  `reloadLiveConfigFile`.
+- `src/Daemon/Config.hs` re-exports the LiveConfig surface.
+- `dhall/live.dhall` provides the shared LiveConfig stub.
+- `test/unit/Main.hs` covers initial decode, file decode, reload-after-edit observation,
+  failed reload preserving the previous config, every `FlushStrategy` and `BackpressureMode`
+  variant, and missing bucket weights defaulting to weight 1.
+
+**Validation**:
+
+- `cabal check` passes with only the existing no-source-repository warning.
+- `cabal build all` passes.
+- `cabal build all --enable-tests` passes.
+- `cabal test daemon-substrate-unit` passes.
+- Documentation metadata and phase-structure validation pass.
+
+**Remaining Work**: none
 
 #### Objective
 
@@ -81,11 +124,28 @@ scheduler layers).
   preserves the previous LiveConfig, round-trip per `FlushStrategy` and `BackpressureMode`
   variant, missing `bucketWeights` entries default to weight 1
 
-### Sprint 3.3: `LifecyclePolicy` Dhall decoders [Planned]
+### Sprint 3.3: `LifecyclePolicy` Dhall decoders [Done]
 
-**Status**: Planned
-**Blocked by**: 3.1
+**Status**: Done
 **Docs to update**: `documents/architecture/lifecycle_policy.md`, `system-components.md`
+
+**Implementation**:
+
+- `src/Daemon/Config/LifecyclePolicy.hs` defines `TopicLifecycle`, `BucketLifecycle`,
+  `OrphanScan`, bucket layout types, top-level `LifecyclePolicy`, and Dhall decode helpers.
+- `dhall/lifecycle-policy.dhall` provides the LifecyclePolicy stub.
+- `test/unit/Main.hs` covers every `TopicLifecycle` variant, `orphanScan = Never`,
+  `orphanScan = EveryHours`, the default safety window, and file decode.
+
+**Validation**:
+
+- `cabal check` passes with only the existing no-source-repository warning.
+- `cabal build all` passes.
+- `cabal build all --enable-tests` passes.
+- `cabal test daemon-substrate-unit` passes.
+- Documentation metadata and phase-structure validation pass.
+
+**Remaining Work**: none
 
 #### Objective
 
@@ -101,11 +161,27 @@ consumes these.
 - unit tests covering: decode round-trip for every `TopicLifecycle` variant, decode round-trip
   for `BucketLifecycle` with `orphanScan = Never` and `EveryHours`, the safety-window default
 
-### Sprint 3.4: 7-phase lifecycle state machine [Planned]
+### Sprint 3.4: 7-phase lifecycle state machine [Done]
 
-**Status**: Planned
-**Blocked by**: 3.2, 3.3
+**Status**: Done
 **Docs to update**: `documents/architecture/daemon_roles.md`, `system-components.md`
+
+**Implementation**:
+
+- `src/Daemon/Lifecycle.hs` defines `LifecyclePhase`, `DaemonRuntime`, `LifecycleError`,
+  `LifecycleResult`, callback-driven `DaemonLifecycleActions`, and `runDaemonLifecycle`.
+- `test/unit/Main.hs` covers ordered phase transitions, readiness state, completion at `Exit`,
+  and Acquire/probe failure surfacing as a failed phase with the error stored on runtime.
+
+**Validation**:
+
+- `cabal check` passes with only the existing no-source-repository warning.
+- `cabal build all` passes.
+- `cabal build all --enable-tests` passes.
+- `cabal test daemon-substrate-unit` passes.
+- Documentation metadata and phase-structure validation pass.
+
+**Remaining Work**: none
 
 #### Objective
 
@@ -119,11 +195,29 @@ phase progression.
 - `src/Daemon/Lifecycle.hs` populated
 - unit tests covering each phase transition; probe failure surfacing as a failed phase
 
-### Sprint 3.5: Signal handlers + readiness HTTP [Planned]
+### Sprint 3.5: Signal handlers + readiness HTTP [Done]
 
-**Status**: Planned
-**Blocked by**: 3.4
+**Status**: Done
 **Docs to update**: `documents/architecture/daemon_roles.md`, `system-components.md`
+
+**Implementation**:
+
+- `src/Daemon/Signal.hs` defines signal tags, runtime snapshots, signal-handler installation,
+  and `applyDaemonSignal`.
+- `src/Daemon/Lifecycle/Endpoints.hs` defines pure endpoint rendering and a minimal
+  `network`-based `/healthz`, `/readyz`, `/metrics` server loop.
+- `test/unit/Main.hs` covers SIGHUP reload request, SIGTERM / SIGINT drain transition,
+  readiness clearing, endpoint status rendering, and metrics phase output.
+
+**Validation**:
+
+- `cabal check` passes with only the existing no-source-repository warning.
+- `cabal build all` passes.
+- `cabal build all --enable-tests` passes.
+- `cabal test daemon-substrate-unit` passes.
+- Documentation metadata and phase-structure validation pass.
+
+**Remaining Work**: none
 
 #### Objective
 
@@ -151,11 +245,28 @@ Sprint 8.3.
 - unit tests covering signal effects on `DaemonRuntime`; integration of HTTP routes covered in
   Phase 8's `daemon-substrate-lifecycle` stanza
 
-### Sprint 3.6: `runService` entry point [Planned]
+### Sprint 3.6: `runService` entry point [Done]
 
-**Status**: Planned
-**Blocked by**: 3.5
+**Status**: Done
 **Docs to update**: `documents/architecture/library_consumption_model.md`, `system-components.md`
+
+**Implementation**:
+
+- `src/Daemon/Lifecycle.hs` exports `runService`, `runServiceWithArgs`, `parseRunServiceArgs`,
+  `ServiceBootConfig`, `ServiceRole`, `RunServiceOptions`, and `RunServiceError`.
+- `runServiceWithArgs` parses role/config paths, decodes BootConfig / LiveConfig /
+  LifecyclePolicy, invokes the callback at `Serve`, and returns typed errors.
+- `test/unit/Main.hs` covers CLI parsing, Dhall decode failure, and callback invocation.
+
+**Validation**:
+
+- `cabal check` passes with only the existing no-source-repository warning.
+- `cabal build all` passes.
+- `cabal build all --enable-tests` passes.
+- `cabal test daemon-substrate-unit` passes.
+- Documentation metadata and phase-structure validation pass.
+
+**Remaining Work**: none
 
 #### Objective
 

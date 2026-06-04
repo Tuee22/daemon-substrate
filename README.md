@@ -121,7 +121,7 @@ Consumers do **not** run the harness — it exists for `daemon-substrate`'s own 
 `daemon-substrate`'s build, lifecycle, and bootstrap layer is provided by
 [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap) — a host-installed Python CLI plus
 four prebuilt base container images that standardize substrate detection, host-prereq install,
-multi-language toolchain (GHC 9.12, Cabal, kube tools, `protoc`, fourmolu, hlint, warm Haskell
+multi-language toolchain (GHC 9.12, Cabal, kube tools, `protoc`, `ormolu`, `hlint`, warm Haskell
 store), and container / daemon lifecycle. `daemon-substrate` declares its own substrate
 behavior in a typed `hostbootstrap.dhall` at the repository root; the operator entrypoint on
 both cohorts is `hostbootstrap cluster up`. The boundary between what `hostbootstrap` owns

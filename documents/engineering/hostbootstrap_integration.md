@@ -19,15 +19,17 @@
   LaunchDaemon).
 - Linux CPU → `Container` model (`service = True`, with `.data` and Docker-socket bind
   mounts).
-- `hostbootstrap cluster up` is the operator entrypoint on both cohorts. The Container or
-  HostDaemon process it launches is `daemon-substrate-test`, which then owns in-cluster
-  reconciliation.
+- `hostbootstrap cluster up` is the outer operator entrypoint on both cohorts. On Linux CPU
+  the service container defaults to `daemon-substrate-test cluster up`; on Apple Silicon the
+  HostDaemon starts the host-native worker service. The Apple inner cluster reconciler is
+  `daemon-substrate-test cluster up`; it currently brings up the deployable kind topology,
+  while full `Ready` validation remains gated on the active live-cluster sprint.
 
 ## Why hostbootstrap
 
 [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap) standardizes substrate detection,
-host-prereq install, the multi-language base toolchain (GHC 9.12, Cabal, kube tools, protoc,
-fourmolu, hlint, warm Haskell store), and container / daemon lifecycle at the OS level — the
+host-prereq install, the multi-language base toolchain (GHC 9.12, Cabal, kube tools, `protoc`,
+`ormolu`, `hlint`, warm Haskell store), and container / daemon lifecycle at the OS level — the
 exact surface `daemon-substrate-test` would otherwise hand-roll. Adopting it collapses what
 would have been substrate-specific bootstrap scripts and a custom Dockerfile family into one
 declarative Dhall file plus a thin project Dockerfile. The same tool is consumed by
@@ -110,16 +112,18 @@ H.config
   }
 ```
 
-This document is the canonical home for the shape; the file itself lands in
-[`phase-7-hostbootstrap-and-project-dockerfile.md`](../../DEVELOPMENT_PLAN/phase-7-hostbootstrap-and-project-dockerfile.md).
+The root `hostbootstrap.dhall` implements this shape. It has been statically validated in the
+repository; live `hostbootstrap doctor` / `cluster up` validation is tracked by Phase 7 Sprint
+7.3 because it requires the Phase 8 `daemon-substrate-test` executable and a hostbootstrap
+cohort environment.
 
 ## Base image and toolchain
 
 `hostbootstrap` selects the per-substrate base tag from
 `docker.io/tuee22/hostbootstrap:basecontainer-{cpu,cuda}-{amd64,arm64}`. The Linux CPU cohort
 uses `basecontainer-cpu-amd64` (or `-arm64` on Apple-hosted Linux runners). The base ships
-GHC 9.12, Cabal, kube tools (`kubectl`, `helm`, `kind`), `protoc`, `ormolu` / `fourmolu`,
-`hlint`, and a warm Haskell store.
+GHC 9.12, Cabal, kube tools (`kubectl`, `helm`, `kind`), `protoc`, `ormolu`, `hlint`, and a
+warm Haskell store.
 
 The GHC pin for this repository is **9.12**, matching the base. See
 [cabal_layout.md](cabal_layout.md).
@@ -136,11 +140,14 @@ FROM ${BASE_IMAGE}
 WORKDIR /workspace
 COPY . .
 RUN cabal install --installdir /usr/local/bin --install-method=copy --overwrite-policy=always exe:daemon-substrate-test
+CMD ["daemon-substrate-test", "cluster", "up"]
 ```
 
 `hostbootstrap` resolves `BASE_IMAGE` to the correct per-substrate tag and passes it via
 `docker build --build-arg`. The Dockerfile carries no toolchain installation logic — every
-heavy layer is in the base.
+heavy layer is in the base. The Dockerfile is present and validated for this boundary; the
+Linux CPU image-build / service-container lifecycle remains open until a Linux CPU cohort is
+available.
 
 ## Operator entrypoints (both cohorts)
 
@@ -155,7 +162,6 @@ Per-clone:
 ```bash
 hostbootstrap doctor          # detect substrate; install host prereqs
 hostbootstrap cluster up      # build + bring the project up
-hostbootstrap cluster status  # heartbeat-driven status (delegates inward)
 hostbootstrap cluster down    # tear down; preserves ./.data/
 ```
 
@@ -171,10 +177,17 @@ Docker Engine / Compose verification and install).
   worker Deployment) inside.
 - **Apple Silicon**: builds `./.build/daemon-substrate-test` natively (the host already has
   GHC via ghcup); installs the LaunchDaemon that runs `daemon-substrate-test service --role
-  worker --config dhall/worker.dhall`. The in-cluster reconciliation (Harbor / Pulsar /
-  MinIO / orchestrator) on Apple is currently still driven by `daemon-substrate-test cluster
-  up` inside the same kind cluster the worker reaches via the edge port — that piece remains
-  Haskell-owned.
+  worker --config dhall/worker.dhall`. The Apple outer lifecycle is validated locally:
+  `hostbootstrap cluster up` installs `/Library/LaunchDaemons/com.hostbootstrap.daemon-substrate.plist`,
+  `launchctl print system/com.hostbootstrap.daemon-substrate` reports the worker service as
+  running, and `hostbootstrap cluster down` removes the unit. The in-cluster reconciliation
+  (Harbor / Pulsar / MinIO / orchestrator) on Apple is driven by the inner
+  `daemon-substrate-test cluster up`; live runs now roll out the dependency StatefulSets,
+  bind PVC-backed state, roll out the orchestrator Deployment, and preserve MinIO / Pulsar
+  data across `cluster down && cluster up`. The inner runner starts managed edge-port
+  forwards, and the Apple host worker has completed a live request -> orchestrator -> host
+  worker -> response smoke handoff through those forwarded endpoints. Full `Ready`
+  validation remains active until Linux CPU validation closes.
 
 The boundary: above the seam (substrate detection, prereqs, container / daemon lifecycle,
 LaunchDaemon installation) is `hostbootstrap`. Below the seam (kind, Harbor, Pulsar, MinIO,

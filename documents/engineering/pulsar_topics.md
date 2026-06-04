@@ -24,8 +24,8 @@
   workflow publish here directly. The substrate exposes no separate HTTP / gRPC / REST
   surface.
 - Substrate-owned envelopes are protobuf; the consumer (in the test harness's case, a mock
-  driver) ships its payload type inside the envelope. The harness uses a single
-  `MockPayload` protobuf for both request and result inputs.
+  driver) ships its payload type inside the envelope. The harness uses `MockRequest`,
+  `MockBatch`, and `MockResult` protobuf messages for request batching and results.
 
 ## Topic inventory
 
@@ -93,7 +93,7 @@ worker replicas within a cohort.
 
 Substrate-owned envelopes are protobuf, encoded with `proto-lens`'s `encodeMessage` /
 `decodeMessage`. The envelopes live in `proto/daemon_substrate/workflow.proto` and friends;
-the test-harness `MockPayload` types live in `proto/daemon_substrate_test/mock.proto`. See
+the test-harness mock types live in `proto/daemon_substrate_test/mock.proto`. See
 [../reference/proto_surface.md](../reference/proto_surface.md).
 
 Substrate publishes and consumes envelopes via the `Daemon.Wire.*` ADT layer; only the wire
@@ -103,7 +103,7 @@ consumer base loops alike) sees idiomatic Haskell ADTs with `Maybe UTCTime` dead
 sum — never the generated lens-records.
 
 Consumer payloads carried inside `WorkflowEvent.inline_bytes` (or referenced via
-`WorkflowEvent.object_ref`) are opaque to substrate; the harness's `MockPayload` is one
+`WorkflowEvent.object_ref`) are opaque to substrate; the harness's mock payloads are one
 example, but consumers in production (`infernix`, `jitML`) choose their own encoding.
 
 ## Acknowledgement and retry
@@ -111,11 +111,15 @@ example, but consumers in production (`infernix`, `jitML`) choose their own enco
 Standard Pulsar semantics. The harness exercises:
 
 - happy path: each worker `pulsarAcknowledge`s after a successful mock-engine return
-- retry path: if the mock engine is asked to fail (via a flag in `MockRequest`), the worker
-  `pulsarNegativeAcknowledge`s and the broker redelivers
+- typed-failure path: if the mock engine is asked to fail (via a flag in `MockRequest`), the
+  worker publishes a `WorkerResult.failure` envelope and acknowledges the source batch
+- retry path: malformed batches, payload materialization failures, or result-publish failures
+  cause the worker to `pulsarNegativeAcknowledge` so the broker redelivers
 - dedup path: `Daemon.Consumer.consumerStep` rejects duplicate `EventId`s seen within the dedup
   window; the harness sends the same `MockRequest` twice and asserts only one
   `WorkerResult` is published
+- routing path: `Daemon.Consumer.HandlerRouter` dispatches by longest `payload_type` URL prefix
+  and `consumerStep` nacks when a handler reports failure
 
 ## Cross-references
 

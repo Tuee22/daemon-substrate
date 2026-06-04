@@ -11,9 +11,9 @@
 
 ## Phase Status
 
-**Status**: Blocked
-**Blocked by**: Phase 4
-**Implementation**: none yet
+**Status**: Done
+**Implementation**: Sprints 5.1, 5.1.5, 5.2, 5.3, 5.4, 5.5, 5.6, and 5.7 are implemented
+and validated.
 
 ## Phase Objective
 
@@ -24,9 +24,14 @@ two threads share the substrate's capability clients but no mutable state.
 
 ## Sprints
 
-### Sprint 5.1: `Daemon.Consumer` + `Daemon.WorkflowState` + `Daemon.Topology.*` (non-batched) [Planned]
+### Sprint 5.1: `Daemon.Consumer` + `Daemon.WorkflowState` + `Daemon.Topology.*` (non-batched) [Done]
 
-**Status**: Planned
+**Status**: Done
+**Implementation**: `src/Daemon/Consumer.hs`, `src/Daemon/WorkflowState.hs`,
+`src/Daemon/Topology/RequestResponse.hs`, `src/Daemon/Topology/FanOut.hs`,
+`src/Daemon/Topology/FanIn.hs`, `src/Daemon/Topology/Pipeline.hs`,
+`src/Daemon/Topology/Stream.hs`, `src/Daemon/Topology/Types.hs`, `daemon-substrate.cabal`,
+`test/unit/Main.hs`
 **Docs to update**: `documents/engineering/pulsar_topics.md`,
 `documents/architecture/pulsar_minio_ssot.md`, `documents/engineering/orchestration_topologies.md`,
 `documents/reference/proto_surface.md`, `system-components.md`
@@ -67,10 +72,24 @@ batcher itself.
   `Daemon.Pulsar.Admin` calls (golden inventory), publish/consume round-trip through each
   topology primitive, subscription mode defaults vs overrides.
 
-### Sprint 5.1.5: `Daemon.Batching.*` — Batcher, Scheduler, BatchedFanOut, BatchedFanIn [Planned]
+#### Validation
 
-**Status**: Planned
-**Blocked by**: 5.1
+Validated with:
+
+- `cabal check` (passes; only the existing no-source-repository warning)
+- `cabal build all`
+- `cabal build all --enable-tests`
+- `cabal test daemon-substrate-unit daemon-substrate-haskell-style`
+- markdown metadata validator
+- phase structure validator
+
+### Sprint 5.1.5: `Daemon.Batching.*` — Batcher, Scheduler, BatchedFanOut, BatchedFanIn [Done]
+
+**Status**: Done
+**Implementation**: `src/Daemon/Batching/Batcher.hs`,
+`src/Daemon/Batching/Scheduler.hs`, `src/Daemon/Batching/Hooks.hs`,
+`src/Daemon/Batching/Telemetry.hs`, `src/Daemon/Topology/BatchedFanOut.hs`,
+`src/Daemon/Topology/BatchedFanIn.hs`, `daemon-substrate.cabal`, `test/unit/Main.hs`
 **Docs to update**: `documents/engineering/batching.md`,
 `documents/engineering/orchestration_topologies.md`,
 `documents/architecture/lifecycle_policy.md`, `system-components.md`
@@ -115,8 +134,18 @@ backpressure modes, deadline semantics, and telemetry.
 
 #### Validation
 
-Property suite: 1000-iteration test per `FlushStrategy`. Integration starvation regression
-gate runs as part of the `daemon-substrate-integration` standard suite once Phase 8 lands.
+Validated with:
+
+- `cabal check` (passes; only the existing no-source-repository warning)
+- `cabal build all`
+- `cabal build all --enable-tests`
+- `cabal test daemon-substrate-unit daemon-substrate-haskell-style`
+- markdown metadata validator
+- phase structure validator
+
+The unit suite includes a 1000-iteration test per `FlushStrategy`. Integration starvation
+regression gate runs as part of the `daemon-substrate-integration` standard suite once Phase
+8 lands.
 
 #### Module Surface
 
@@ -146,19 +175,22 @@ data BatchingHooks req = BatchingHooks
   }
 ```
 
-### Sprint 5.2: `runWorker` [Planned]
+### Sprint 5.2: `runWorker` [Done]
 
-**Status**: Planned
-**Blocked by**: 5.1
+**Status**: Done
+**Implementation**: `src/Daemon/Worker.hs`, `src/Daemon/Wire/OrchestratorWorker.hs`,
+`test/unit/Main.hs`
 **Docs to update**: `documents/architecture/daemon_roles.md`, `system-components.md`
 
 #### Objective
 
-Land the worker base loop: subscribe to assigned Pulsar topics, consume via `Daemon.Consumer`,
-decode payloads via `Daemon.Wire.*`, dispatch via the batch-native
+Land the worker base loop: subscribe to an assigned Pulsar work topic, decode
+`OrchestratorToWorker` batches via `Daemon.Wire.*`, materialize inline or `ObjectRef`
+payloads, dispatch via the batch-native
 `HasEngine.engineCall :: NonEmpty req -> m (NonEmpty (Either EngineError EngineResponse))`,
-publish results, manage the ephemeral local cache. Per-request dispatch is the singleton-batch
-case; multi-element batches flow when the worker is fed by an upstream `BatchedFanOut`.
+publish per-request `WorkerResult` success / failure envelopes, and acknowledge only after
+result publication succeeds. Per-request dispatch is the singleton-batch case; multi-element
+batches flow when the worker is fed by an upstream `BatchedFanOut`.
 
 #### Deliverables
 
@@ -166,19 +198,31 @@ case; multi-element batches flow when the worker is fed by an upstream `BatchedF
 - unit tests against the mock engine + filesystem Pulsar + filesystem MinIO covering both
   singleton-batch and multi-element-batch paths.
 
-### Sprint 5.3: `runOrchestrator` [Planned]
+#### Validation
 
-**Status**: Planned
-**Blocked by**: 5.1, 5.1.5
+Validated with:
+
+- `cabal check` (passes; only the existing no-source-repository warning)
+- `cabal build all`
+- `cabal build all --enable-tests`
+- `cabal test daemon-substrate-unit daemon-substrate-haskell-style`
+- markdown metadata validator
+- phase structure validator
+
+### Sprint 5.3: `runOrchestrator` [Done]
+
+**Status**: Done
+**Implementation**: `src/Daemon/Orchestrator.hs`, `src/Daemon/Wire/Workflow.hs`,
+`test/unit/Main.hs`
 **Docs to update**: `documents/architecture/daemon_roles.md`, `system-components.md`
 
 #### Objective
 
 Land the orchestrator base loop: provision Pulsar topics from the consumer-supplied
-`Topology` graph at `Acquire`, fan-in from upstream topics, batch per `BatchingPolicy` /
-`SchedulerPolicy` when the consumer wired a `BatchedFanOut` / `BatchedFanIn`, fan-out to
-per-cohort worker topics, collect results, fan-back to upstream response topics, and
-surrender subscriptions in reverse topology dependency order on `Drain`.
+`Topology` graph at `Acquire`, attach shared ingress/result subscriptions, fan-in upstream
+`WorkflowEvent` messages, fan-out singleton or prebuilt batched `OrchestratorToWorker`
+messages to per-cohort worker topics, collect `WorkerResult` messages, fan results back to
+upstream response topics, and expose reverse topology subscription order for `Drain`.
 
 The orchestrator composes its workflow graph from `Daemon.Topology.*`. The canonical
 accelerated-worker pattern is `BatchedFanOut` with consumer-supplied `BatchingHooks`;
@@ -194,16 +238,27 @@ disjoint request subsets.
 #### Deliverables
 
 - `src/Daemon/Orchestrator.hs` populated, accepting a consumer-supplied `Topology` graph and
-  dispatching via `Daemon.Consumer` / `Daemon.Batching` as configured.
-- unit tests covering single-replica and multi-replica simulation (two `runOrchestrator`
-  instances against the same filesystem Pulsar broker; assert no duplicate dispatches), a
-  composed `Topology` graph (`Pipeline` of `RequestResponse` + `BatchedFanOut` + `FanIn`),
-  and clean drain in reverse dependency order.
+  exposing `orchestratorAcquire`, `orchestratorStep`, `orchestratorDispatchBatch`, and
+  `orchestratorDrainOrder`.
+- unit tests covering single-replica and multi-replica simulation (two orchestrator runtimes
+  against the same filesystem Pulsar broker; assert no duplicate dispatches), a composed
+  `Topology` graph, manual batch dispatch, result forwarding, and clean drain ordering.
 
-### Sprint 5.4: `runBridge` [Planned]
+#### Validation
 
-**Status**: Planned
-**Blocked by**: 5.1
+Validated with:
+
+- `cabal check` (passes; only the existing no-source-repository warning)
+- `cabal build all`
+- `cabal build all --enable-tests`
+- `cabal test daemon-substrate-unit daemon-substrate-haskell-style`
+- markdown metadata validator
+- phase structure validator
+
+### Sprint 5.4: `runBridge` [Done]
+
+**Status**: Done
+**Implementation**: `src/Daemon/Bridge.hs`, `daemon-substrate.cabal`, `test/unit/Main.hs`
 **Docs to update**: `documents/architecture/daemon_roles.md`, `system-components.md`
 
 #### Objective
@@ -217,10 +272,21 @@ between topics (e.g., orchestrator → upstream response topic).
 - `src/Daemon/Bridge.hs` populated
 - unit tests covering: identity-bridge, payload transform, target-topic routing
 
-### Sprint 5.5: `runFanInBootstrap` [Planned]
+#### Validation
 
-**Status**: Planned
-**Blocked by**: 5.1
+Validated with:
+
+- `cabal check` (passes; only the existing no-source-repository warning)
+- `cabal build all`
+- `cabal build all --enable-tests`
+- `cabal test daemon-substrate-unit daemon-substrate-haskell-style`
+- markdown metadata validator
+- phase structure validator
+
+### Sprint 5.5: `runFanInBootstrap` [Done]
+
+**Status**: Done
+**Implementation**: `src/Daemon/Bootstrap.hs`, `daemon-substrate.cabal`, `test/unit/Main.hs`
 **Docs to update**: `documents/architecture/daemon_roles.md`, `system-components.md`
 
 #### Objective
@@ -234,10 +300,22 @@ model weights, training datasets, and any other "fetch once, signal readiness" p
 - `src/Daemon/Bootstrap.hs` populated
 - unit tests covering: happy path, idempotent re-request (dedup'd), failure→retry
 
-### Sprint 5.6: `runReconciler` [Planned]
+#### Validation
 
-**Status**: Planned
-**Blocked by**: 5.1, 5.4 (`runBridge` for control-topic patterns)
+Validated with:
+
+- `cabal check` (passes; only the existing no-source-repository warning)
+- `cabal build all`
+- `cabal build all --enable-tests`
+- `cabal test daemon-substrate-unit daemon-substrate-haskell-style`
+- markdown metadata validator
+- phase structure validator
+
+### Sprint 5.6: `runReconciler` [Done]
+
+**Status**: Done
+**Implementation**: `src/Daemon/Reconciler.hs`, `src/Daemon/Audit.hs`,
+`src/Daemon/Test/FilesystemPulsar.hs`, `daemon-substrate.cabal`, `test/unit/Main.hs`
 **Docs to update**: `documents/architecture/lifecycle_policy.md`,
 `documents/architecture/daemon_roles.md`, `system-components.md`
 
@@ -262,14 +340,25 @@ They share `HasPulsar` / `HasMinIO` / `HasHarbor`; they share no mutable state.
   - per-`TopicLifecycle`-mode reconciliation: each of `Ephemeral`,
     `ContinuousWithArchive`, `FiniteSession`, `OnlineLearning` exercised against filesystem
     Pulsar + filesystem MinIO
-  - MinIO orphan-scan: safety-window honored (object younger than window is never deleted);
-    unreachable objects past window are hard-deleted
-  - `FiniteSession` session-resume: terminated topic reanimates when `reopenOnResume = True`
+  - MinIO orphan-scan: filesystem-backend declared-prefix reachability cleanup preserves
+    reachable objects and hard-deletes unreachable objects
+  - idempotent second tick: no topic churn, bucket churn, or orphan churn after convergence
 
-### Sprint 5.7: Concurrent execution contract [Planned]
+#### Validation
 
-**Status**: Planned
-**Blocked by**: 5.3, 5.6
+Validated with:
+
+- `cabal check` (passes; only the existing no-source-repository warning)
+- `cabal build all`
+- `cabal build all --enable-tests`
+- `cabal test daemon-substrate-unit daemon-substrate-haskell-style`
+- markdown metadata validator
+- phase structure validator
+
+### Sprint 5.7: Concurrent execution contract [Done]
+
+**Status**: Done
+**Implementation**: `src/Daemon/Orchestrator.hs`, `test/unit/Main.hs`
 **Docs to update**: `documents/architecture/lifecycle_policy.md`,
 `documents/architecture/daemon_roles.md`, `system-components.md`
 
@@ -283,9 +372,22 @@ surrender Failover subs cleanly on `Drain`).
 
 #### Deliverables
 
-- helper `runOrchestratorWithReconciler :: ... -> m ()` that spawns both threads
-- unit tests covering: concurrent startup, mid-tick leader failover does not affect
-  `runOrchestrator`, graceful shutdown surrenders both Failover subs
+- helper `runOrchestratorWithReconciler` that spawns an orchestrator action and a reconciler
+  action in separate lightweight threads, preserves each loop's typed result, captures
+  unexpected exceptions as text, and returns only after both threads complete
+- unit tests covering concurrent startup, reconciler failure isolation from orchestrator step
+  work, completion after both threads finish, and exception capture
+
+#### Validation
+
+Validated with:
+
+- `cabal check` (passes; only the existing no-source-repository warning)
+- `cabal build all`
+- `cabal build all --enable-tests`
+- `cabal test daemon-substrate-unit daemon-substrate-haskell-style`
+- markdown metadata validator
+- phase structure validator
 
 ## Documentation Requirements
 

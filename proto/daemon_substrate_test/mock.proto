@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package daemon_substrate_test;
+
+message MockRequest {
+  string request_id = 1;
+  string weight_bucket = 2;
+  string weight_key = 3;
+  bool force_failure = 4;
+  bytes input_payload = 5;
+}
+
+message MockBatch {
+  repeated MockRequest requests = 1;
+}
+
+message MockResult {
+  string request_id = 1;
+  bytes result_payload = 2;
+}

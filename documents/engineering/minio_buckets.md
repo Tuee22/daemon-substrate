@@ -16,15 +16,28 @@
   bootstrap. Total bucket footprint stays under a few MB.
 - Workers read from `weights` and `artifacts` via `HasMinIO`. The orchestrator writes the seed
   objects during cluster bring-up as part of its WAN→MinIO hydration role (here simulated,
-  not real). The reconciler manages buckets + orphan-scan per the
+  not real). Later result-output paths may write tiny artifacts for `ObjectRef` coverage. The
+  reconciler manages buckets + orphan-scan per the
   [`LifecyclePolicy`](../architecture/lifecycle_policy.md).
+
+## Current Status
+
+Phase 2 has landed `HasMinIO`, `Daemon.MinIO.Cache`, `Daemon.MinIO.Store`,
+`Daemon.MinIO.Admin`, and `Daemon.Test.FilesystemMinIO`. Current unit validation covers
+put/get, put-if-absent, pointer CAS, content-addressed blob round-trip, cache cold path,
+LRU-style quota eviction, pin survival under eviction pressure, bucket creation, and prefix
+listing. `Daemon.MinIO.Subprocess` is a concrete `curl`-backed implementation through
+`Daemon.Sub`; it carries typed SigV4 credential fields and renders them to curl's
+`--aws-sigv4` / `-u` arguments without reading environment state. The live admin path treats
+HTTP 409 bucket creation as no-change, configures bucket lifecycle with S3 XML plus a
+checksum header, and parses S3 list-object XML for prefix scans.
 
 ## Bucket inventory
 
 | Bucket | Purpose | Writer | Reader | Approx. size |
 |--------|---------|--------|--------|--------------|
 | `daemon-substrate-test-weights` | mock model "weights" (content-addressed `blobs/`, `manifests/`, `pointers/`) | orchestrator (seed at startup); reconciler (orphan-scan target) | worker (per request) | < 1 MB |
-| `daemon-substrate-test-artifacts` | mock binary input / output artifacts | worker (writes outputs); orchestrator (seeds inputs) | both | < 1 MB |
+| `daemon-substrate-test-artifacts` | mock binary input / output artifacts for `ObjectRef` coverage | orchestrator (seeds inputs); later output paths | both | < 1 MB |
 | `daemon-substrate-test-archives` | Pulsar topic archives (`archives/<topic>/<startTime>-<endTime>.archive`) | reconciler (`ContinuousWithArchive` export) | integration tests (read for assertions) | varies; capped by `archiveRetentionDays` |
 
 Both buckets are pre-created by the kind cluster bring-up flow (see
@@ -42,18 +55,19 @@ Three deterministic mock weight objects:
 | `mock/v1/medium.bin` | 16 KiB of `0xBB`-filled bytes | deterministic |
 | `mock/v1/large.bin` | 256 KiB of `0xCC`-filled bytes | deterministic |
 
-The mock engine "loads" one of these per `MockRequest` based on a field in the request. The
-actual bytes are never inspected; they exist to exercise the fetch path and the local cache.
+The mock engine loads one of these per `MockRequest.weight_bucket` / `MockRequest.weight_key`.
+The actual bytes are never inspected; they exist to exercise the fetch path and the local
+cache.
 
 ### `daemon-substrate-test-artifacts`
 
 | Key prefix | Purpose |
 |------------|---------|
-| `mock/input/<request-id>` | seeded by the orchestrator on request fan-out when the request includes an "input artifact" flag |
-| `mock/output/<request-id>` | written by the worker when the mock engine indicates it produced an output |
+| `mock/input/<request-id>` | seeded by the orchestrator when a test chooses an `object_ref` input payload |
+| `mock/output/<request-id>` | reserved for later output-object paths that exercise `WorkerResult.success.output_object` |
 
-Outputs are also tiny (128 bytes of zero-padded JSON-like content). They exist to exercise the
-write path and the `ObjectRef` reference flow in `WorkerResult`.
+Artifacts are tiny deterministic byte blobs. They exist to exercise the `ObjectRef` reference
+flow without turning MinIO into workflow state.
 
 ## Authoritative vs cached reads
 

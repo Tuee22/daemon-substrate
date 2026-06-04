@@ -1,0 +1,10 @@
+replicas: 1
+image:
+  repository: quay.io/minio/minio
+  tag: latest
+mcImage:
+  repository: quay.io/minio/mc
+  tag: latest
+credentials:
+  accessKey: minioadmin
+  secretKey: minioadmin

@@ -20,6 +20,18 @@
 - On both cohorts the operator entrypoint is `hostbootstrap cluster up`; the
   `daemon-substrate-test test ...` commands run inside the resulting environment.
 
+Current implementation note: Phase 8 Sprints 8.1 through 8.5 implement the executable parser,
+help surface, Cabal test delegation, and the four local test stanzas. Phase 8 Sprint 8.6
+implements the live cluster runner, deployable dependency charts, PVC-backed Apple kind
+state, and live service loops. The current `daemon-substrate-integration` stanza is still a
+local placeholder gate; rows 3-36 below describe the live coverage that must land before
+Phase 8 can close. Apple Silicon live validation has covered cluster bring-up, PVC-backed
+state preservation, native Pulsar Failover leadership for the reconciler, and live
+Pulsar/MinIO admin interactions. Apple host-worker edge-port handoff and a live
+request -> orchestrator -> host worker -> response smoke handoff are validated. The remaining
+live coverage row is Linux CPU cohort validation, tracked by Phase 8 phase-level remaining
+work and Phase 7 Sprint 7.3.
+
 ## Command surface
 
 | Command | Cohort coverage | Cluster required | Approximate runtime |
@@ -158,8 +170,9 @@ Covers:
 
 ### `test integration`
 
-The `daemon-substrate-integration` cabal stanza. Requires a running kind cluster brought up
-by `hostbootstrap cluster up`. Covers rows 3–36 above.
+The `daemon-substrate-integration` cabal stanza. The current stanza is a local placeholder
+gate delegated by `daemon-substrate-test test integration`. The target live suite requires a
+running kind cluster brought up by `hostbootstrap cluster up` and covers rows 3-36 above.
 
 ### `test lint`
 

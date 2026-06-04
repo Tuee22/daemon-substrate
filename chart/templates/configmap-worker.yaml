@@ -1,0 +1,15 @@
+{{- if .Values.worker.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "daemon-substrate-test.workerConfigName" . }}
+  labels:
+    {{- include "daemon-substrate-test.labels" . | nindent 4 }}
+data:
+  worker.dhall: |
+{{ default .Values.config.workerDhall (.Files.Get "files/worker.dhall") | indent 4 }}
+  live.dhall: |
+{{ .Files.Get "files/live.dhall" | indent 4 }}
+  lifecycle-policy.dhall: |
+{{ .Files.Get "files/lifecycle-policy.dhall" | indent 4 }}
+{{- end }}

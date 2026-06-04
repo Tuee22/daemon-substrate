@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package daemon_substrate;
+
+message WorkflowEvent {
+  string event_id = 1;
+  int64 produced_at = 2;
+  int64 deadline_at = 3;
+  WorkflowKind workflow_kind = 4;
+  string payload_type = 5;
+
+  oneof payload {
+    bytes inline_bytes = 6;
+    ObjectRef object_ref = 7;
+  }
+}
+
+enum WorkflowKind {
+  WORKFLOW_KIND_UNSPECIFIED = 0;
+  WORKFLOW_KIND_TRAINING = 1;
+  WORKFLOW_KIND_INFERENCE = 2;
+  WORKFLOW_KIND_EVALUATION = 3;
+  WORKFLOW_KIND_INGESTION = 4;
+  WORKFLOW_KIND_AUDIT = 5;
+  WORKFLOW_KIND_CUSTOM = 6;
+}
+
+message ObjectRef {
+  string bucket = 1;
+  string key = 2;
+  string etag = 3;
+}

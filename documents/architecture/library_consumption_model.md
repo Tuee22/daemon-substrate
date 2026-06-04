@@ -76,7 +76,7 @@ The library exposes these public modules (names finalized in the relevant phase)
 | `Daemon.Audit` | compacted-topic helper for reconciler audit log | library |
 | `Daemon.Consumer` | consumer-batch primitive + `HandlerRouter` + dedup cache | library |
 | `Daemon.Worker` | `runWorker` base loop | library |
-| `Daemon.Orchestrator` | `runOrchestrator` base loop | library |
+| `Daemon.Orchestrator` | `runOrchestrator` base loop and `runOrchestratorWithReconciler` concurrent runner | library |
 | `Daemon.Bridge` | `runBridge` base loop (transform one topic, publish another) | library |
 | `Daemon.Bootstrap` | `runFanInBootstrap` base loop (request → MinIO → ready event) | library |
 | `Daemon.Reconciler` | `runReconciler` base loop (leader-elected Pulsar + MinIO lifecycle) | library |
@@ -85,6 +85,60 @@ The library exposes these public modules (names finalized in the relevant phase)
 | `Daemon.Wire.*` | hand-written Haskell ADT wrappers around `Daemon.Proto.*`; idiomatic application-facing types with `toProto` / `fromProto` codecs | library |
 | `Daemon.Topology.*` | typed builders for Pulsar topologies (`RequestResponse`, `FanOut`, `BatchedFanOut`, `FanIn`, `BatchedFanIn`, `Pipeline`, `Stream`) | library |
 | `Daemon.Batching.*` | substrate-owned batcher + multi-bucket scheduler (`BatchingPolicy`, `SchedulerPolicy`, `BatchingHooks`); see [../engineering/batching.md](../engineering/batching.md) | library |
+
+Current implementation note: `Daemon.Config.BootConfig`, `Daemon.Config.LiveConfig`, and
+`Daemon.Config.LifecyclePolicy` are implemented. `BootConfig` exposes `Role` (`Worker` /
+`Orchestrator`), phantom role markers, role-specific decode helpers, and
+`maxInlinePayloadBytes` defaulting to `1048576` when omitted. `LiveConfig` exposes retry
+policy, dedup-cache policy, `drainDeadlineSeconds`, `BatchingPolicy`, `SchedulerPolicy`,
+closed `FlushStrategy` and `BackpressureMode` enums, and `reloadLiveConfigFile`, which returns
+the previous config unchanged when reload decode fails. `LifecyclePolicy` exposes the four
+`TopicLifecycle` modes, bucket layout/orphan-scan policy, and Dhall decoders with
+`safetyWindowMin = None Natural` defaulting to 60 minutes. `Daemon.Lifecycle` implements the
+seven-phase callback-driven state machine, runtime record, CLI parser, and `runService` /
+`runServiceWithArgs` entry points. `runService` decodes BootConfig, LiveConfig, and
+LifecyclePolicy, invokes the consumer callback at `Serve`, and reports typed decode or
+lifecycle failures. `Daemon.Signal` maps SIGHUP to reload and SIGTERM / SIGINT to drain, and
+`Daemon.Lifecycle.Endpoints` renders the minimal health, readiness, and metrics endpoints
+from runtime state.
+
+`Daemon.Engine` implements the batch-native `HasEngine` signature:
+`engineCall :: NonEmpty EngineRequest -> m (NonEmpty (Either EngineError EngineResponse))`.
+`NativeEngine` wraps an in-process batch handler. `SubprocessEngine` runs each request through
+the typed `Daemon.Sub` boundary, preserves the request id on success, returns typed
+subprocess failures, and enforces a per-request timeout. `Daemon.Test.EchoEngines` provides
+native and subprocess echo handles used by unit coverage; it is a test helper, not a
+consumer-facing engine implementation.
+
+`Daemon.Audit` publishes generated `AuditEvent` protobuf messages with compacted-topic keys
+rendered as `<kind>:<id>` and replays the latest `ReconcileAction` per resource. `Daemon.Wire.*`
+is implemented for workflow, control, orchestrator/worker, lifecycle, and audit envelopes;
+application code uses the wire ADTs while generated `Daemon.Proto.*` imports stay restricted
+to wrapper, wire, protocol-boundary, audit-boundary, and test-helper modules.
+
+`Daemon.Worker` implements the worker-side base loop surface: `runWorker` subscribes to a
+work topic, `workerStep` consumes one `OrchestratorToWorker` batch, materializes inline or
+`ObjectRef` payloads, dispatches through the batch-native `HasEngine` contract, publishes
+`WorkerResult` success / failure envelopes, and acks only after result publication succeeds.
+`Daemon.Orchestrator` implements the orchestrator-side acquire/step surface: provision a
+consumer-supplied `Topology`, attach shared ingress/result subscriptions, dispatch
+`WorkflowEvent` messages to worker topics as `OrchestratorToWorker` batches, forward
+`WorkerResult` messages to response topics, and compute reverse subscription order for drain.
+It also exposes `runOrchestratorWithReconciler`, which runs an orchestrator action and a
+reconciler action in separate threads while preserving typed loop outcomes.
+`Daemon.Bridge` implements the generic one-topic-to-another bridge: consume a source message,
+run a consumer-supplied transform that may choose the target topic, publish the transformed
+payload, and ack only after the publish succeeds.
+`Daemon.Bootstrap` implements the fan-in bootstrap pattern: consume a `WorkflowEvent`
+request, run consumer-supplied work, write the ready bytes into MinIO, publish a deduplicated
+ready `WorkflowEvent` carrying an `ObjectRef`, and nack failures for retry.
+`Daemon.Reconciler` implements the leader-acquire plus one-tick reconciliation surface:
+subscribe to the leader-control topic in `Failover` mode, replay audit state, create/configure
+declared Pulsar topics and MinIO buckets idempotently, publish audit records for changed
+resources, and remove unreachable declared-prefix objects in the filesystem test backend.
+The repository's own harness Dhall files use the consumer-owned `app` field to declare the
+test orchestrator topic graph and worker cohort settings; consumers define their own `app`
+records the same way.
 
 ## What the library owns
 

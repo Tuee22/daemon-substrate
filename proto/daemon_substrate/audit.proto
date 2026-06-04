@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package daemon_substrate;
+
+import "daemon_substrate/workflow.proto";
+
+message ResourceRef {
+  string kind = 1;
+  string id = 2;
+}
+
+enum ReconcileAction {
+  RECONCILE_ACTION_UNSPECIFIED = 0;
+  RECONCILE_ACTION_CREATED = 1;
+  RECONCILE_ACTION_CONFIGURED = 2;
+  RECONCILE_ACTION_TERMINATED = 3;
+  RECONCILE_ACTION_EXPORTED = 4;
+  RECONCILE_ACTION_IMPORTED = 5;
+  RECONCILE_ACTION_DELETED = 6;
+  RECONCILE_ACTION_NOOP = 7;
+}
+
+message AuditEvent {
+  ResourceRef resource = 1;
+  ReconcileAction action = 2;
+  int64 observed_at = 3;
+  string actor = 4;
+  repeated ObjectRef source_refs = 5;
+  repeated ObjectRef result_refs = 6;
+}

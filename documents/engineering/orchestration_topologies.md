@@ -17,7 +17,12 @@
 
 ## Current Status
 
-Target behavior. Module surface and Dhall config land in [Phase 5 Sprint 5.1](../../DEVELOPMENT_PLAN/phase-5-base-loops.md) (non-batched primitives) and [Sprint 5.1.5](../../DEVELOPMENT_PLAN/phase-5-base-loops.md) (batched variants). This document precedes implementation by phase ordering so that downstream phases can reference the contract.
+Phase 5 Sprint 5.1 implements the non-batched topology inventory:
+`Daemon.Topology.RequestResponse`, `Daemon.Topology.FanOut`, `Daemon.Topology.FanIn`,
+`Daemon.Topology.Pipeline`, `Daemon.Topology.Stream`, and shared `Daemon.Topology.Types`.
+Phase 5 Sprint 5.1.5 implements `Daemon.Topology.BatchedFanOut`,
+`Daemon.Topology.BatchedFanIn`, and the pure `Daemon.Batching.*` runtime machinery they
+carry as construction metadata for the later orchestrator base loop.
 
 ## Primitive inventory
 
@@ -65,7 +70,8 @@ fanOut :: Topic -> NonEmpty (Cohort, Topic) -> FanOut req
 ```haskell
 module Daemon.Topology.BatchedFanOut where
 
-import Daemon.Batching (BatchingPolicy, SchedulerPolicy, BatchingHooks)
+import Daemon.Batching.Hooks (BatchingHooks)
+import Daemon.Config.LiveConfig (BatchingPolicy, SchedulerPolicy)
 import Daemon.Topology.FanOut (FanOut)
 
 data BatchedFanOut req = BatchedFanOut
@@ -152,11 +158,16 @@ Topologies are normal Haskell values; consumers can build them programmatically,
 
 Property tests in `daemon-substrate-unit`:
 
-- Builder → expected `Daemon.Pulsar.Admin` calls match a golden inventory per primitive.
-- Round-trip publish/consume through each primitive delivers the right messages to the right subscribers.
+- Builder → expected topology inventory per primitive.
+- Batched builders preserve the underlying `FanOut` / `FanIn` topic and subscription
+  inventory while retaining `BatchingPolicy`, `SchedulerPolicy`, and `BatchingHooks`.
 - Subscription mode defaults are honored; overrides take effect.
-- `Failover` vs `Shared` semantics observable end-to-end (single active vs round-robin).
-- Cycle detection on `Pipeline` fails closed at `Acquire`.
+- `runOrchestrator` provisioning creates required topology topics.
+- Shared-subscription multi-replica simulation dispatches disjoint ingress messages.
+- Orchestrator dispatch and response-forward tests cover `WorkflowEvent` →
+  `OrchestratorToWorker` and `WorkerResult` → response-topic paths.
+- Reverse topology subscription order is exposed for drain. Full cycle detection remains a
+  later acquire-time validation hardening item.
 
 Integration tests in `daemon-substrate-integration`:
 

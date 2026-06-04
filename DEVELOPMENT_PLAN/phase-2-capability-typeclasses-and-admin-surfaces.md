@@ -12,9 +12,13 @@
 
 ## Phase Status
 
-**Status**: Blocked
-**Blocked by**: Phase 1
-**Implementation**: none yet
+**Status**: Done
+**Implementation**: `src/Daemon/Pulsar.hs`, `src/Daemon/Pulsar/Admin.hs`,
+`src/Daemon/MinIO.hs`, `src/Daemon/MinIO/Cache.hs`, `src/Daemon/MinIO/Store.hs`,
+`src/Daemon/MinIO/Admin.hs`, `src/Daemon/Harbor.hs`, `src/Daemon/Kubectl.hs`,
+`src/Daemon/Sub.hs`, `proto/PulsarApi.proto`, `src/Daemon/Proto/PulsarApi.hs`,
+`src/Daemon/Test/Filesystem*.hs`, `src/Daemon/Pulsar/Native*.hs`
+**Remaining work**: (none)
 
 ## Phase Objective
 
@@ -35,9 +39,12 @@ protobuf envelopes.
 
 ## Sprints
 
-### Sprint 2.1: `HasPulsar` typeclass + subprocess + filesystem impls [Planned]
+### Sprint 2.1: `HasPulsar` typeclass + native + filesystem impls [Done]
 
-**Status**: Planned
+**Status**: Done
+**Implementation**: `src/Daemon/Pulsar.hs`, `src/Daemon/Pulsar/Native.hs`,
+`src/Daemon/Proto/PulsarApi.hs`, `src/Daemon/Test/FilesystemPulsar.hs`, `src/Daemon/Sub.hs`,
+`proto/PulsarApi.proto`, `src/Daemon/Pulsar/Native/{Frame,Connection,Lookup,Producer,Consumer}.hs`
 **Docs to update**: `documents/engineering/pulsar_native_client.md` (new),
 `documents/engineering/pulsar_topics.md`, `documents/engineering/cabal_layout.md`,
 `documents/reference/proto_surface.md`, `system-components.md`
@@ -71,25 +78,35 @@ Ship two implementations:
 
 - `src/Daemon/Pulsar.hs` populated (typeclass + types)
 - `src/Daemon/Pulsar/Native.hs` populated (production `HasPulsar` instance), with internal
-  sub-modules `Native/Frame.hs` (wire framing), `Native/Connection.hs` (multiplexed TCP
-  connection + `CONNECT` handshake + `PING`/`PONG` keepalive), `Native/Lookup.hs` (topic
-  `LOOKUP` + partitioned-topic metadata), `Native/Producer.hs`, `Native/Consumer.hs`, and
+  sub-modules `Native/Frame.hs` (wire framing + payload metadata/checksum envelope),
+  `Native/Connection.hs` (TCP connection, `CONNECT` handshake, `PING`/`PONG`, timeouts),
+  `Native/Lookup.hs` (topic `LOOKUP`), `Native/Producer.hs`, `Native/Consumer.hs`, and
   `Native/Compression.hs` (optional, default `NONE`)
-- `proto/PulsarApi.proto` vendored (the Pulsar wire-protocol schema; compiled by the existing
-  `proto-lens-protoc` step into `Daemon.Proto.PulsarApi`)
+- `proto/PulsarApi.proto` vendored (the Pulsar wire-protocol schema); Cabal's
+  `proto-lens-setup` hook generates `Proto.PulsarApi` / `Proto.PulsarApi_Fields`, and
+  `Daemon.Proto.PulsarApi` re-exports them under the substrate namespace.
 - `src/Daemon/Test/FilesystemPulsar.hs` populated
 - unit tests covering: publish→consume, ack, negative-ack, seek, dedup-window behavior,
   Exclusive-rejects-second-subscriber
+- unit tests covering native frame encode/decode, payload metadata/checksum encode/decode,
+  invalid service URL handling, and generated command round-trips for CONNECT, SUBSCRIBE,
+  PRODUCER, SEND, and ACK helpers
 
 #### Validation
 
 `cabal test daemon-substrate-unit` exercises every method against the filesystem
-implementation; integration coverage of the subprocess implementation lands in Phase 8.
+implementation and the native frame/payload/command helpers; live-broker integration coverage
+lands in Phase 8.
 
-### Sprint 2.2: `Daemon.Pulsar.Admin` typed admin surface [Planned]
+#### Remaining Work
 
-**Status**: Planned
-**Blocked by**: 2.1
+(none)
+
+### Sprint 2.2: `Daemon.Pulsar.Admin` typed admin surface [Done]
+
+**Status**: Done
+**Implementation**: `src/Daemon/Pulsar/Admin.hs`, `src/Daemon/Pulsar/Admin/Http.hs`,
+`src/Daemon/Test/FilesystemPulsar.hs`
 **Docs to update**: `documents/architecture/lifecycle_policy.md`, `system-components.md`
 
 #### Objective
@@ -97,8 +114,8 @@ implementation; integration coverage of the subprocess implementation lands in P
 Define `Daemon.Pulsar.Admin` with typed operations: `createTopic`, `deleteTopic`,
 `terminateTopic`, `setRetention`, `setCompaction`, `setDedupWindow`, `listTopics`,
 `exportTopicToObject`, `importTopicFromObject`. Each operation is idempotent (creates swallow
-already-exists, set-ops are set-not-add). Implement against both filesystem and subprocess
-backends.
+already-exists, set-ops are set-not-add). Implement against both filesystem and production
+HTTP backends.
 
 #### Deliverables
 
@@ -114,10 +131,16 @@ backends.
 
 `cabal test daemon-substrate-unit` covers idempotency on every admin op.
 
-### Sprint 2.3: `HasMinIO` + Cache + Store [Planned]
+#### Remaining Work
 
-**Status**: Planned
-**Blocked by**: 2.1
+(none)
+
+### Sprint 2.3: `HasMinIO` + Cache + Store [Done]
+
+**Status**: Done
+**Implementation**: `src/Daemon/MinIO.hs`, `src/Daemon/MinIO/Cache.hs`,
+`src/Daemon/MinIO/Store.hs`, `src/Daemon/MinIO/Subprocess.hs`,
+`src/Daemon/Test/FilesystemMinIO.hs`
 **Docs to update**: `documents/engineering/minio_buckets.md`,
 `documents/architecture/lifecycle_policy.md`, `system-components.md`
 
@@ -163,10 +186,14 @@ Ship two implementations:
 
 `cabal test daemon-substrate-unit` exercises every method.
 
-### Sprint 2.4: `Daemon.MinIO.Admin` typed bucket admin [Planned]
+#### Remaining Work
 
-**Status**: Planned
-**Blocked by**: 2.3
+(none)
+
+### Sprint 2.4: `Daemon.MinIO.Admin` typed bucket admin [Done]
+
+**Status**: Done
+**Implementation**: `src/Daemon/MinIO/Admin.hs`, `src/Daemon/Test/FilesystemMinIO.hs`
 **Docs to update**: `documents/architecture/lifecycle_policy.md`, `system-components.md`
 
 #### Objective
@@ -181,10 +208,19 @@ Define `Daemon.MinIO.Admin` with `createBucket`, `setBucketLifecycle`, `listBuck
 - subprocess implementation invoking `curl` with S3 bucket-admin endpoints
 - unit tests covering idempotency
 
-### Sprint 2.5: `HasHarbor` typeclass + subprocess + filesystem impls [Planned]
+#### Validation
 
-**Status**: Planned
-**Blocked by**: 2.1
+`cabal test daemon-substrate-unit` covers filesystem bucket creation, lifecycle set, prefix
+listing, and object deletion behavior.
+
+#### Remaining Work
+
+(none)
+
+### Sprint 2.5: `HasHarbor` typeclass + subprocess + filesystem impls [Done]
+
+**Status**: Done
+**Implementation**: `src/Daemon/Harbor.hs`, `src/Daemon/Test/FilesystemHarbor.hs`
 **Docs to update**: `system-components.md`
 
 #### Objective
@@ -199,10 +235,19 @@ invoking `docker` + `curl` against Harbor's API.
 - both implementations populated
 - unit tests covering existence checks, push idempotency, list semantics
 
-### Sprint 2.6: `HasKubectl` typeclass + subprocess + filesystem impls [Planned]
+#### Validation
 
-**Status**: Planned
-**Blocked by**: 2.1
+`cabal test daemon-substrate-unit` covers the filesystem implementation's existence checks,
+push idempotency, pull, and list semantics.
+
+#### Remaining Work
+
+(none)
+
+### Sprint 2.6: `HasKubectl` typeclass + subprocess + filesystem impls [Done]
+
+**Status**: Done
+**Implementation**: `src/Daemon/Kubectl.hs`, `src/Daemon/Test/FilesystemKubectl.hs`
 **Docs to update**: `system-components.md`
 
 #### Objective
@@ -216,6 +261,15 @@ invoking `kubectl` with `KUBECONFIG` set.
 - `src/Daemon/Kubectl.hs` populated
 - both implementations populated
 - unit tests covering apply idempotency, status reporting, get/delete round-trip
+
+#### Validation
+
+`cabal test daemon-substrate-unit` covers the filesystem implementation's apply idempotency,
+status reporting, get, and delete behavior.
+
+#### Remaining Work
+
+(none)
 
 ## Documentation Requirements
 
@@ -240,7 +294,7 @@ invoking `kubectl` with `KUBECONFIG` set.
 **Reference docs to create/update:**
 - `documents/reference/proto_surface.md` gains a note that `proto/PulsarApi.proto` is vendored
   in this phase as the Pulsar wire-protocol schema — distinct from the substrate-owned
-  `proto/daemon_substrate/*` envelopes, which still land in Phase 4.
+  `proto/daemon_substrate/*` envelopes, which land in Phase 4.
 
 **Cross-references to add:**
 - `system-components.md` flips the relevant typeclass and admin rows to `Implemented: yes`

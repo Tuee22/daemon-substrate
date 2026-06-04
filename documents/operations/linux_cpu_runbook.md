@@ -73,7 +73,7 @@ There is no host worker on Linux. The worker runs as a Kubernetes Deployment:
 - Two replicas (the kind cluster has three worker nodes)
 - `requiredDuringSchedulingIgnoredDuringExecution` pod anti-affinity on
   `kubernetes.io/hostname`
-- Reads `daemon-substrate-worker.dhall` from the mounted `configmap-worker` at
+- Reads `worker.dhall` from the mounted `configmap-worker` at
   `/etc/daemon-substrate/worker.dhall`
 - Subscribes to `test.batch.linux-cpu` in `Shared` mode (the two pods fan out among
   themselves)

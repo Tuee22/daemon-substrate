@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package daemon_substrate;
+
+enum LifecyclePhase {
+  LIFECYCLE_PHASE_UNSPECIFIED = 0;
+  LIFECYCLE_PHASE_LOAD = 1;
+  LIFECYCLE_PHASE_PREREQ = 2;
+  LIFECYCLE_PHASE_ACQUIRE = 3;
+  LIFECYCLE_PHASE_READY = 4;
+  LIFECYCLE_PHASE_SERVE = 5;
+  LIFECYCLE_PHASE_DRAIN = 6;
+  LIFECYCLE_PHASE_EXIT = 7;
+}
+
+message ReadinessReport {
+  LifecyclePhase phase = 1;
+  string phase_detail = 2;
+  int64 heartbeat_at = 3;
+  bool ready = 4;
+}

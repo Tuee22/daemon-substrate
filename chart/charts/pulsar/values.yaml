@@ -1,0 +1,6 @@
+replicas: 1
+image:
+  repository: apachepulsar/pulsar
+  tag: "3.3.2"
+bookkeeper:
+  port: 3181

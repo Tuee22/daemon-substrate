@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-pulsar
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: pulsar
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: pulsar
+      port: 6650
+      targetPort: pulsar
+    - name: admin
+      port: 8080
+      targetPort: admin
+    - name: bookkeeper
+      port: {{ .Values.bookkeeper.port }}
+      targetPort: bookkeeper

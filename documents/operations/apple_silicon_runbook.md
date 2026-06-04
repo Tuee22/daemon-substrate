@@ -45,18 +45,23 @@ These match the prereqs the `HostDaemon` model's `H.HostReqs` declares for this 
 
 ```bash
 hostbootstrap doctor              # one-time: install prereqs
-hostbootstrap cluster up          # build binary, install LaunchDaemon, bring kind cluster up
+hostbootstrap cluster up          # build binary, install LaunchDaemon
+./.build/daemon-substrate-test cluster up  # inner kind-cluster reconciler
 ```
 
 `hostbootstrap cluster up` is a restartable reconciler. On Apple Silicon it:
 
 1. Builds `./.build/daemon-substrate-test` from source via the `cabal install` command
    declared in `hostbootstrap.dhall`'s `H.Build`
-2. Stages Dhall configs under `./.build/`
-3. Installs the LaunchDaemon at `/Library/LaunchDaemons/com.tuee22.daemon-substrate.worker.plist`
+2. Installs the LaunchDaemon at `/Library/LaunchDaemons/com.hostbootstrap.daemon-substrate.plist`
    that runs `./.build/daemon-substrate-test service --role worker --config dhall/worker.dhall`
-4. Delegates to `./.build/daemon-substrate-test cluster up` for in-cluster reconciliation
-   (Harbor, Pulsar, MinIO, orchestrator)
+3. Leaves in-cluster reconciliation to the inner `./.build/daemon-substrate-test cluster up`
+   command. The inner reconciler now rolls out the dependency StatefulSets, PVC-backed
+   storage, Pulsar / MinIO admin setup, orchestrator Deployment, and reconciler Failover
+   leadership. It also starts managed localhost forwards for Pulsar, Pulsar admin, and
+   MinIO; the host worker has been validated through a live request -> orchestrator -> host
+   worker -> response smoke handoff. Full `Ready` validation remains active until Linux CPU
+   cohort validation runs.
 
 Subsequent bring-ups skip prerequisite verification when the active checkpoints match. The
 LaunchDaemon starts the worker before any user logs in — supporting headless remote SSH.
@@ -65,7 +70,7 @@ To inspect:
 
 ```bash
 launchctl list | grep daemon-substrate
-log show --predicate 'subsystem == "com.tuee22.daemon-substrate"' --last 5m
+launchctl print system/com.hostbootstrap.daemon-substrate
 ```
 
 ## On-host worker daemon
@@ -74,17 +79,18 @@ The worker runs under the LaunchDaemon as a long-running process. Recommended in
 foreground debugging (with the LaunchDaemon stopped):
 
 ```bash
-sudo launchctl bootout system /Library/LaunchDaemons/com.tuee22.daemon-substrate.worker.plist
+sudo launchctl bootout system /Library/LaunchDaemons/com.hostbootstrap.daemon-substrate.plist
 ./.build/daemon-substrate-test service \
     --role worker \
-    --config ./.build/daemon-substrate-worker.dhall
+    --config dhall/worker.dhall
 ```
 
 The worker:
 
 - reads its Dhall config (Pulsar endpoint, MinIO endpoint, cohort tag, cache directory)
-- discovers the in-cluster Pulsar / MinIO endpoints via the edge port in
-  `./.build/edge-port.json`
+- discovers the in-cluster Pulsar / Pulsar admin / MinIO endpoints via
+  `./.build/edge-port.json`, whose `pulsarPort`, `pulsarAdminPort`, and `minioPort` fields
+  map to managed localhost port-forwards
 - subscribes to `test.batch.apple-silicon` in `Shared` mode
 - writes its local cache to `./.cache/daemon-substrate-worker/`
 - logs to stdout / stderr; LaunchDaemon-launched logs reach `os_log`
@@ -98,7 +104,8 @@ subscription cleanly, and exits.
 ## Teardown
 
 ```bash
-hostbootstrap cluster down    # remove LaunchDaemon; in-cluster reconcilers tear cluster down
+hostbootstrap cluster down                    # remove LaunchDaemon
+./.build/daemon-substrate-test cluster down   # inner kind-cluster teardown
 ```
 
 Preserves `./.data/`, `./.build/`, the worker's `./.cache/`, and installed Homebrew /
@@ -109,14 +116,14 @@ still preserves `./.data/`.
 
 ### Cluster pods stuck in `Pending`
 
-The kind cluster is configured for three worker nodes plus one control-plane; if the operator
-manually altered the kind config, two-worker replicas may be unschedulable. Check with:
+The Apple Silicon kind cluster is configured for one worker node plus one control-plane
+because the Worker runs on the host, not as an in-cluster Deployment. Check with:
 
 ```bash
 KUBECONFIG=./.build/daemon-substrate.kubeconfig kubectl get nodes
 ```
 
-If fewer than three worker nodes are present, `daemon-substrate-test cluster down` +
+If the node count does not match that topology, `daemon-substrate-test cluster down` +
 `cluster up` re-creates the cluster with the supported topology.
 
 ### Edge port collision
@@ -126,14 +133,16 @@ Check `./.build/edge-port.json` for the actually-chosen port; restart the worker
 so it reads the updated value:
 
 ```bash
-sudo launchctl kickstart -k system/com.tuee22.daemon-substrate.worker
+sudo launchctl kickstart -k system/com.hostbootstrap.daemon-substrate
 ```
 
 ### Host worker cannot reach in-cluster Pulsar
 
-Check the edge port is reachable: `curl http://localhost:<port>/admin/v2/clusters`. If the
-port is closed but the cluster says it is `Ready`, kind's port mapping is the likely culprit;
-`daemon-substrate-test cluster down` + `cluster up` re-establishes it.
+Check the Pulsar admin edge port is reachable:
+`curl http://localhost:<pulsarAdminPort>/admin/v2/clusters`. If the port is closed but
+dependency pods are Ready, rerun `daemon-substrate-test cluster up` to recreate the managed
+port-forwards, or `daemon-substrate-test cluster down` + `cluster up` to recreate the kind
+cluster too.
 
 ### Colima not running
 
@@ -142,7 +151,7 @@ ensures Colima is running on first invocation but does not babysit it.
 
 ### LaunchDaemon failed to load
 
-`sudo launchctl print system/com.tuee22.daemon-substrate.worker` reports the failure reason.
+`sudo launchctl print system/com.hostbootstrap.daemon-substrate` reports the failure reason.
 Common causes: missing binary at the declared path (re-run `hostbootstrap cluster up`),
 permissions on `./.build/` (LaunchDaemons run as root; ensure the binary is readable).
 

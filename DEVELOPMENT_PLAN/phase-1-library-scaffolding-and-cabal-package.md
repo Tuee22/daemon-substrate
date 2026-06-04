@@ -9,9 +9,10 @@
 
 ## Phase Status
 
-**Status**: Blocked
-**Blocked by**: Phase 0 (documentation standards must close before code-writing phases open)
-**Implementation**: none yet
+**Status**: Done
+**Implementation**: `daemon-substrate.cabal`, `cabal.project`, `src/Daemon/`,
+`test/`, `.github/workflows/ci.yml`
+**Remaining work**: none.
 
 ## Phase Objective
 
@@ -24,9 +25,10 @@ library; Phase 2 fills the typeclass surface in.
 
 ## Sprints
 
-### Sprint 1.1: Cabal package + GHC pin [Planned]
+### Sprint 1.1: Cabal package + GHC pin [Done]
 
-**Status**: Planned
+**Status**: Done
+**Implementation**: `daemon-substrate.cabal`, `cabal.project`, `test/`
 **Docs to update**: `documents/engineering/cabal_layout.md`, `system-components.md`
 
 #### Objective
@@ -50,12 +52,12 @@ toolchain.
 
 #### Remaining Work
 
-(scoped when the sprint opens)
+(none)
 
-### Sprint 1.2: Module skeleton [Planned]
+### Sprint 1.2: Module skeleton [Done]
 
-**Status**: Planned
-**Blocked by**: 1.1
+**Status**: Done
+**Implementation**: `src/Daemon/`
 **Docs to update**: `documents/engineering/cabal_layout.md`, `system-components.md`
 
 #### Objective
@@ -79,12 +81,12 @@ compiles them and so Phase 2 has a place to add typeclass definitions.
 
 #### Remaining Work
 
-(scoped when the sprint opens)
+(none)
 
-### Sprint 1.3: CI build [Planned]
+### Sprint 1.3: CI build [Done]
 
-**Status**: Planned
-**Blocked by**: 1.2
+**Status**: Done
+**Implementation**: `.github/workflows/ci.yml`
 **Docs to update**: `documents/development/local_dev.md`
 
 #### Objective
@@ -103,7 +105,7 @@ CI workflow runs green on the first push that includes it.
 
 #### Remaining Work
 
-(scoped when the sprint opens)
+(none)
 
 ## Documentation Requirements
 

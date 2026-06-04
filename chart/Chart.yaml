@@ -1,0 +1,20 @@
+apiVersion: v2
+name: daemon-substrate-test
+description: Test-harness chart for daemon-substrate cluster validation
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+dependencies:
+  - name: harbor
+    version: 0.1.0
+    repository: file://charts/harbor
+    condition: dependencies.harbor.enabled
+  - name: pulsar
+    version: 0.1.0
+    repository: file://charts/pulsar
+    condition: dependencies.pulsar.enabled
+  - name: minio
+    version: 0.1.0
+    repository: file://charts/minio
+    condition: dependencies.minio.enabled
+

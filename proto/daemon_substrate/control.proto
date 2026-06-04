@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package daemon_substrate;
+
+message ControlEnvelope {
+  oneof command {
+    Drain drain = 1;
+    Reload reload = 2;
+  }
+}
+
+message Drain {
+  int64 deadline_unix_nanos = 1;
+}
+
+message Reload {}

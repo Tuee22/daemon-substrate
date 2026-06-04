@@ -1,0 +1,52 @@
+nameOverride: ""
+fullnameOverride: ""
+
+dependencies:
+  harbor:
+    enabled: true
+  pulsar:
+    enabled: true
+  minio:
+    enabled: true
+
+image:
+  repository: daemon-substrate-test
+  tag: local
+  pullPolicy: IfNotPresent
+
+orchestrator:
+  replicas: 2
+  service:
+    port: 8080
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+worker:
+  enabled: true
+  replicas: 2
+  antiAffinity:
+    required: true
+    topologyKey: kubernetes.io/hostname
+  service:
+    port: 8081
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+config:
+  orchestratorDhall: |
+    ./dhall/orchestrator.dhall
+  workerDhall: |
+    ./dhall/worker.dhall
+
+networkPolicy:
+  enabled: true

@@ -31,10 +31,10 @@ Establish the documentation standards, plan standards, and the metadata-bearing 
 documents. Populate the `documents/` and `DEVELOPMENT_PLAN/` trees with the architecture,
 engineering, and operations docs the later phases reference.
 
-This phase is open. Its closure requires completion of every documentation obligation called
-out by Sprints 0.1 – 0.4 and 0.6. The doc validator (Phase 0 Sprint 0.5) is **deferred to
-Phase 8 Sprint 8.5**, where it lands as part of the test-lint gate; Phase 0 closure does not
-depend on it.
+This phase is closed. The documentation obligations called out by Sprints 0.1 – 0.4 and 0.6
+are complete and validated. The doc validator (Phase 0 Sprint 0.5) is **deferred to Phase 8
+Sprint 8.5**, where it lands as part of the test-lint gate; Phase 0 closure does not depend
+on it.
 
 ### Phase 1 — library scaffolding and cabal package
 
@@ -95,7 +95,8 @@ and `Daemon.WorkflowState` (append-only workflow event ownership over Pulsar). S
 optional bucket-affinity dwell) so consumers compose accelerated-worker topologies without
 writing raw Pulsar code:
 
-- `runWorker` — Pulsar consumer with dedup → batch-native `HasEngine` → result publish
+- `runWorker` — Pulsar batch consumer → payload materialization → batch-native `HasEngine`
+  → result publish
 - `runOrchestrator` — provision a consumer-supplied `Topology` graph, fan-in / batch /
   fan-out via `Daemon.Topology.*` + `Daemon.Batching.*`, WAN hydration
 - `runBridge` — consume one topic, transform, publish another

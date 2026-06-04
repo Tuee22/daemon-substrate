@@ -19,7 +19,13 @@
 
 ## Current Status
 
-Target behavior. Module surface lands in [Phase 5 Sprint 5.1.5](../../DEVELOPMENT_PLAN/phase-5-base-loops.md); the `BatchingPolicy` + `SchedulerPolicy` Dhall surfaces extend [Phase 3 Sprint 3.2](../../DEVELOPMENT_PLAN/phase-3-bootconfig-liveconfig-lifecycle.md)'s `LiveConfig`. This document precedes implementation by phase ordering.
+`BatchingPolicy` and `SchedulerPolicy` are implemented as Dhall-decoded records in
+`Daemon.Config.LiveConfig` and are reloadable through `reloadLiveConfigFile`.
+`Daemon.Batching.Hooks`, `Daemon.Batching.Batcher`, `Daemon.Batching.Scheduler`, and
+`Daemon.Batching.Telemetry` implement the pure runtime batching machinery. The batched
+topology wrappers live in `Daemon.Topology.BatchedFanOut` and
+`Daemon.Topology.BatchedFanIn`. The later `runOrchestrator` sprint wires these pure
+primitives into the long-running Pulsar loop.
 
 ## Why substrate-owned
 
@@ -218,11 +224,14 @@ Operators tune `bucketWeights` by watching the deficit gauge and `deadline_miss_
 
 Property tests in `daemon-substrate-unit`:
 
-- Flush-trigger correctness for each `FlushStrategy` (size hit, wait window hit, deadline preemption).
-- WFQ deficit calculation matches a reference implementation over a 10 000-step synthetic trace.
+- 1000-iteration flush-trigger coverage for each `FlushStrategy` (size hit, wait window hit,
+  and `WindowedFixed` full-batch behavior).
+- WFQ service share over a 10 000-step synthetic trace.
 - Deadline preemption fires within `deadlinePreemptionEpsilon` of the deadline.
 - Bucket-affinity dwell is honored: scheduler stays on selected bucket for the full window unless the bucket drains.
-- Backpressure modes produce expected upstream effects: `Block` pauses Pulsar permits; `ShedLoad` publishes typed failure; `Redirect` routes to secondary topic.
+- Backpressure modes resolve to the expected typed decisions: `Block`, `ShedLoad`, and
+  `Redirect` with the secondary topic.
+- Expired requests are dropped before dispatch and emit `BatcherDroppedExpired` telemetry.
 
 Integration tests in `daemon-substrate-integration`:
 

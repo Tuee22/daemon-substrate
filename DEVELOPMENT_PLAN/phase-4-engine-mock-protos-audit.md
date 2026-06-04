@@ -10,9 +10,8 @@
 
 ## Phase Status
 
-**Status**: Blocked
-**Blocked by**: Phase 3
-**Implementation**: none yet
+**Status**: Done
+**Implementation**: Sprints 4.1 through 4.5 are implemented and validated.
 
 ## Phase Objective
 
@@ -25,9 +24,12 @@ action-kind enums can be defined alongside the other substrate-owned envelopes.
 
 ## Sprints
 
-### Sprint 4.1: Protobuf schemas + code generation [Planned]
+### Sprint 4.1: Protobuf schemas + code generation [Done]
 
-**Status**: Planned
+**Status**: Done
+**Implementation**: `proto/daemon_substrate/*.proto`,
+`proto/daemon_substrate_test/mock.proto`, `src/Daemon/Proto/*.hs`,
+`src/Daemon/Proto/Workflow.hs`, `daemon-substrate.cabal`, `test/unit/Main.hs`
 **Docs to update**: `documents/reference/proto_surface.md`, `system-components.md`
 
 #### Objective
@@ -72,10 +74,20 @@ proto3 default behavior). A publish-path test asserts the guard rail: an over-ma
 payload is rejected at publish time with a typed `InlinePayloadTooLarge` error (the substrate
 does not externalize it), while an `object_ref` payload of any size publishes unaffected.
 
-### Sprint 4.2: `HasEngine` typeclass + engine-handle sum [Planned]
+Validated with:
 
-**Status**: Planned
-**Blocked by**: 4.1
+- `cabal check` (passes; only the existing no-source-repository warning)
+- `cabal build all`
+- `cabal build all --enable-tests`
+- `cabal test daemon-substrate-unit`
+- markdown metadata validator
+- phase structure validator
+
+### Sprint 4.2: `HasEngine` typeclass + engine-handle sum [Done]
+
+**Status**: Done
+**Implementation**: `src/Daemon/Engine.hs`, `src/Daemon/Test/EchoEngines.hs`,
+`daemon-substrate.cabal`, `test/unit/Main.hs`
 **Docs to update**: `documents/architecture/library_consumption_model.md`, `system-components.md`
 
 #### Objective
@@ -103,10 +115,22 @@ and the `SubprocessEngine` / `NativeEngine` constructors. Both variants implemen
   error propagation (one element fails, others succeed), batch-wide error (engine crash),
   timeout (subprocess variant)
 
-### Sprint 4.3: Mock engine [Planned]
+#### Validation
 
-**Status**: Planned
-**Blocked by**: 4.2
+Validated with:
+
+- `cabal check` (passes; only the existing no-source-repository warning)
+- `cabal build all`
+- `cabal build all --enable-tests`
+- `cabal test daemon-substrate-unit`
+- markdown metadata validator
+- phase structure validator
+
+### Sprint 4.3: Mock engine [Done]
+
+**Status**: Done
+**Implementation**: `src/Daemon/Test/MockEngine.hs`, `daemon-substrate.cabal`,
+`test/unit/Main.hs`
 **Docs to update**: `documents/engineering/mock_engine.md`, `system-components.md`
 
 #### Objective
@@ -130,10 +154,21 @@ Same instance is reused by every integration test row in Phase 8.
   success/failure in a single batch (one `force_failure = true`, others succeed), cache cold
   / warm paths
 
-### Sprint 4.4: `Daemon.Audit` compacted-topic helper [Planned]
+#### Validation
 
-**Status**: Planned
-**Blocked by**: 4.1, 4.2
+Validated with:
+
+- `cabal check` (passes; only the existing no-source-repository warning)
+- `cabal build all`
+- `cabal build all --enable-tests`
+- `cabal test daemon-substrate-unit`
+- markdown metadata validator
+- phase structure validator
+
+### Sprint 4.4: `Daemon.Audit` compacted-topic helper [Done]
+
+**Status**: Done
+**Implementation**: `src/Daemon/Audit.hs`, `daemon-substrate.cabal`, `test/unit/Main.hs`
 **Docs to update**: `documents/architecture/lifecycle_policy.md`, `system-components.md`
 
 #### Objective
@@ -152,10 +187,24 @@ Operations:
 - unit tests covering: publish round-trip, replay after multiple writes to the same key
   (compaction semantics), concurrent-publish dedup
 
-### Sprint 4.5: `Daemon.Wire.*` hand-written ADTs + round-trip property tests [Planned]
+#### Validation
 
-**Status**: Planned
-**Blocked by**: 4.1
+Validated with:
+
+- `cabal check` (passes; only the existing no-source-repository warning)
+- `cabal build all`
+- `cabal build all --enable-tests`
+- `cabal test daemon-substrate-unit`
+- markdown metadata validator
+- phase structure validator
+
+### Sprint 4.5: `Daemon.Wire.*` hand-written ADTs + round-trip property tests [Done]
+
+**Status**: Done
+**Implementation**: `src/Daemon/Wire/Workflow.hs`, `src/Daemon/Wire/Control.hs`,
+`src/Daemon/Wire/OrchestratorWorker.hs`, `src/Daemon/Wire/Lifecycle.hs`,
+`src/Daemon/Wire/Audit.hs`, `daemon-substrate.cabal`, `test/unit/Main.hs`,
+`test/haskell-style/Main.hs`
 **Docs to update**: `documents/reference/proto_surface.md`, `system-components.md`
 
 #### Objective
@@ -186,6 +235,16 @@ sites.
 Property suite passes 1000 iterations per envelope type. A linter check (or grep gate) in
 `daemon-substrate-haskell-style` asserts that no module outside `src/Daemon/Wire/` or the
 publish/subscribe boundary imports `Daemon.Proto.*` directly.
+
+Validated with:
+
+- `cabal check` (passes; only the existing no-source-repository warning)
+- `cabal build all`
+- `cabal build all --enable-tests`
+- `cabal test daemon-substrate-unit`
+- `cabal test daemon-substrate-haskell-style`
+- markdown metadata validator
+- phase structure validator
 
 #### Module Surface
 

@@ -24,6 +24,30 @@
 - The client is behind the `HasPulsar` / `Daemon.Pulsar.Admin` typeclasses, so neither consumer
   code nor `Daemon.Test.FilesystemPulsar` changes when the implementation does.
 
+## Current Status
+
+Phase 2 has landed the public `HasPulsar` and `Daemon.Pulsar.Admin` typeclass surfaces plus
+`Daemon.Test.FilesystemPulsar`, which owns current unit validation for publish / consume /
+ack / nack / seek, dedup keys, Exclusive-subscription rejection, and admin idempotency.
+
+`Daemon.Pulsar.Admin.Http` is a concrete in-process HTTP client built on `http-client` /
+`http-client-tls`, using a configured admin base URL and optional bearer token. It supports
+both `http://` and `https://` through the TLS manager and sends the Pulsar admin REST payload
+shapes required by the broker for retention JSON, compaction thresholds, and dedup windows.
+The vendored
+`proto/PulsarApi.proto` schema is wired into Cabal through `proto-lens-setup`; the generated
+`Proto.PulsarApi` / `Proto.PulsarApi_Fields` modules are re-exported as
+`Daemon.Proto.PulsarApi`. `Daemon.Pulsar.Native` is a socket-backed production `HasPulsar`
+instance: it parses typed `pulsar://host:port` broker URLs, performs the `CONNECT` handshake,
+uses `LOOKUP` to resolve owner brokers, registers producers and consumers, publishes `SEND`
+frames with Pulsar's metadata-length + CRC32C payload envelope, consumes `MESSAGE` frames via
+`FLOW`, sends ACK / redelivery / SEEK commands, and keeps process-local consumer sessions for
+long-lived subscriptions. Native consumers are named per process/session so Pulsar can expose a
+single `activeConsumerName` for Failover subscriptions. Unit coverage validates frame and
+payload round trips, admin payload rendering, and invalid-service-url handling; Apple Silicon
+live validation covers topic lookup, admin configuration, seek/reset during audit replay, and
+named Failover leadership for the reconciler.
+
 ## Why native, not the WebSocket gateway
 
 The Pulsar WebSocket gateway was rejected for the production path:
@@ -69,29 +93,41 @@ the substrate needs:
 
 - **Framing.** Every frame is `[4-byte total size][4-byte command size][BaseCommand protobuf]`.
   Payload-bearing commands (`SEND`, `MESSAGE`) append
-  `[magic 0x0e01][4-byte CRC32C checksum][MessageMetadata][payload bytes]`. Framing is built
-  with `bytestring` builders; there is no JSON anywhere on the data plane.
+  `[magic 0x0e01][4-byte CRC32C checksum][4-byte metadata size][MessageMetadata][payload bytes]`.
+  Framing is built with `bytestring` builders; there is no JSON anywhere on the data plane.
 - **Commands used.** `CONNECT` / `CONNECTED`, `PING` / `PONG`, `LOOKUP` /
   `PARTITIONED_METADATA`, `PRODUCER` / `PRODUCER_SUCCESS`, `SEND` / `SEND_RECEIPT` /
   `SEND_ERROR`, `SUBSCRIBE` / `SUCCESS`, `FLOW`, `MESSAGE`, `ACK` / `ACK_RESPONSE`,
-  `REDELIVER_UNACKNOWLEDGED_MESSAGES`, `SEEK`, `CLOSE_PRODUCER` / `CLOSE_CONSUMER`.
-- **Schema.** `proto/PulsarApi.proto` is vendored verbatim from Apache Pulsar and compiled by the
-  existing `proto-lens-protoc` step into `Daemon.Proto.PulsarApi`. It is a *wire transport*
-  schema, distinct from the substrate-owned application envelopes under `daemon_substrate/`; see
-  [../reference/proto_surface.md](../reference/proto_surface.md).
+  `REDELIVER_UNACKNOWLEDGED_MESSAGES`, `SEEK`, `ACTIVE_CONSUMER_CHANGE`,
+  `CLOSE_PRODUCER` / `CLOSE_CONSUMER`.
+- **Schema.** `proto/PulsarApi.proto` is vendored verbatim from Apache Pulsar and compiled by
+  the `proto-lens-protoc` setup hook into `Proto.PulsarApi` /
+  `Proto.PulsarApi_Fields`, re-exported to substrate code as `Daemon.Proto.PulsarApi`. It is a
+  *wire transport* schema, distinct from the substrate-owned application envelopes under
+  `daemon_substrate/`; see [../reference/proto_surface.md](../reference/proto_surface.md).
 
 ## Connection model
 
-- **One multiplexed TCP connection per owner broker.** All producers and consumers for a broker
-  share a single connection; in-flight requests are correlated by `request_id`, and incoming
-  frames are demultiplexed to the right producer/consumer by `producer_id` / `consumer_id`.
-- **Topic lookup.** `LOOKUP` (and `PARTITIONED_METADATA` for partitioned topics) resolves a topic
-  to its owner broker so the client connects **directly** to it — no proxy indirection. The
-  connection pool is keyed by resolved broker address.
-- **Keepalive.** Periodic `PING` / `PONG` on idle connections; a missed keepalive triggers
-  reconnect-and-resubscribe (the same recovery path used on broker failover).
-- **Async pipelining.** Requests are issued without head-of-line blocking; responses are matched
-  to their `request_id` as they arrive.
+- **Producer connection per publish; persistent consumer sessions.** Publish operations open a
+  broker connection, perform `CONNECT`, resolve the owner broker with `LOOKUP`, register a
+  producer, and complete the `SEND` exchange against that owner. Consumer operations use a
+  process-local session keyed by service URL, operation timeout, and `Subscription`; the session
+  keeps the native socket and `consumer_id` alive across consume, ack, nack, seek, and
+  leadership checks while preserving the handle-free public `HasPulsar` surface.
+- **Topic lookup.** `LOOKUP` resolves a topic to its owner broker so the client connects directly
+  to it. Partitioned-topic metadata is still a later hardening concern because the harness topics
+  are non-partitioned. When the bootstrap service URL is loopback (`localhost`, `127.0.0.1`,
+  or `::1`), the client pins the resolved owner to that bootstrap address. This is the
+  single-broker port-forward path used by the Apple host worker: Pulsar still advertises its
+  in-cluster broker service, but host-native clients must stay on the forwarded loopback
+  socket.
+- **Keepalive and control frames.** Incoming broker `PING`s are answered with `PONG`.
+  `ACTIVE_CONSUMER_CHANGE` frames update the session's cached Failover-active state and are
+  ignored by operations that are waiting for data-plane frames. Matching `CLOSE_CONSUMER` frames
+  invalidate the session so the next operation reconnects and resubscribes.
+- **Seek/reset behavior.** Pulsar standalone can close a consumer after `SEEK`; the native client
+  treats a broker close after a successfully written seek as a completed reset and invalidates
+  the session. This is the audit-replay reset path used by the reconciler.
 
 ## Data-plane semantics (`HasPulsar`)
 
@@ -99,9 +135,12 @@ the substrate needs:
   coalesce into one batched `SEND` whose `MessageMetadata.num_messages_in_batch > 1`. Batching
   composes with the substrate-owned `Daemon.Batching.*` layer rather than replacing it.
 - `pulsarSubscribe` → `SUBSCRIBE` in the requested `SubscriptionMode` (`Shared`, `Failover`,
-  `KeyShared`, `Exclusive`).
+  `KeyShared`, `Exclusive`) with a non-empty native `consumer_name`.
+- `pulsarWaitActive` → for non-Failover subscriptions returns active immediately; for Failover
+  subscriptions reads `ACTIVE_CONSUMER_CHANGE` frames and returns true only for the active
+  consumer, falling back to the cached active state on an idle read timeout.
 - `pulsarConsume` → bulk `FLOW` permits (tunable prefetch) followed by pipelined `MESSAGE`
-  receipt.
+  receipt. An idle read timeout returns `Nothing` rather than failing the loop.
 - `pulsarAcknowledge` → individual or **cumulative** `ACK`.
 - `pulsarNegativeAcknowledge` → tracked client-side and surfaced as
   `REDELIVER_UNACKNOWLEDGED_MESSAGES`.
@@ -116,11 +155,12 @@ the substrate needs:
 
 The typed admin operations (`createTopic`, `deleteTopic`, `terminateTopic`, `setRetention`,
 `setCompaction`, `setDedupWindow`, `listTopics`, `exportTopicToObject`, `importTopicFromObject`)
-map to the broker admin REST API (`/admin/v2/...`) via `http-client` + `http-client-tls`. The
-admin plane is low-frequency and off the hot path, so it carries no native-protocol perf
-requirement; the win is simply removing the last Pulsar subprocess and the `pulsar-admin` binary
-from the base image. Idempotency rules are unchanged: creates swallow already-exists, set-ops are
-set-not-add.
+map to the broker admin REST API (`/admin/v2/...`) via `http-client` + `http-client-tls`.
+Retention updates send `{"retentionTimeInMinutes":...,"retentionSizeInMB":...}`, compaction
+and dedup updates send numeric request bodies, and every request uses the configured operation
+timeout. The admin plane is low-frequency and off the hot path, so it carries no
+native-protocol perf requirement. Idempotency rules are unchanged: creates swallow
+already-exists, set-ops are set-not-add.
 
 ## Compression
 

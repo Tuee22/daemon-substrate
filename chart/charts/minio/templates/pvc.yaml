@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-minio-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: daemon-substrate-manual
+  volumeName: daemon-substrate-minio
+  resources:
+    requests:
+      storage: 10Gi

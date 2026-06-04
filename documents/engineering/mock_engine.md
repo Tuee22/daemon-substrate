@@ -12,11 +12,18 @@
 
 - The mock engine implements `HasEngine` with a `NativeEngine` variant that returns
   deterministic placeholder bytes per `MockRequest`.
-- It performs real reads from MinIO (mock weight blobs), real writes to MinIO (mock output
-  artifacts), and real reads/writes against the worker's local cache. None of these payloads
-  are large.
+- It performs real reads from MinIO (mock weight blobs) and real reads/writes against the
+  worker's local cache. None of these payloads are large.
 - It is **not** an ML model. There is no math, no inference, no training, no GPU work. The
   engine exists only to validate the substrate, not the consumers' workloads.
+
+## Current Status
+
+`Daemon.Test.MockEngine` is implemented. It exposes `MockEngine`, `mockNativeEngine`,
+`mockResult`, and `mockResultPayload`. `mockNativeEngine` is a `NativeEngine` whose
+`EngineRequest` payload is an encoded `MockRequest`; successful responses carry an encoded
+`MockResult` in `EngineResponse.engineResponsePayload`. Unit coverage exercises singleton
+batches, multi-element batches, mixed success/failure batches, and cache cold/warm behavior.
 
 ## What the mock engine does
 
@@ -24,37 +31,29 @@ Given a `MockRequest` envelope:
 
 ```proto
 message MockRequest {
-  string request_id    = 1;
-  string weight_key    = 2;  // points at daemon-substrate-test-weights bucket
-  bool   write_output  = 3;  // if true, engine writes to daemon-substrate-test-artifacts
-  bool   force_failure = 4;  // if true, engine returns EngineError for retry-path testing
-  int64  cache_hint    = 5;  // optional: causes a cache lookup before MinIO read
+  string request_id     = 1;
+  string weight_bucket  = 2;  // usually daemon-substrate-test-weights
+  string weight_key     = 3;  // object key inside weight_bucket
+  bool   force_failure  = 4;  // if true, engine returns EngineError for retry-path testing
+  bytes  input_payload  = 5;  // opaque test payload mixed into the deterministic result
 }
 ```
 
 The engine:
 
-1. Reads `mock/v1/<weight_key>` from `daemon-substrate-test-weights` via `HasMinIO`. On cold
+1. Reads `<weight_key>` from `<weight_bucket>` via `HasMinIO`. On cold
    path, fetches from MinIO; on warm path, hits the local cache via `Daemon.MinIO.Cache`.
-2. If `force_failure` is `true`, returns `EngineNativeError "mock forced failure"` so the
+2. If `force_failure` is `true`, returns `EngineRequestFailed "mock forced failure"` so the
    worker's negative-ack path can be exercised.
-3. Computes a placeholder result: SHA-256 of `(request_id || weight_bytes)`, truncated to 32
-   bytes. This is deterministic, exercises the byte path, and produces nothing meaningful.
-   `cache_hint` affects cache-lookup behavior in step 1 only; it is **not** included in the
-   SHA-256 input. The hash domain is exactly `request_id || weight_bytes`, in that order,
-   with no separator.
-4. If `write_output` is `true`, writes a 128-byte JSON-shaped placeholder to
-   `mock/output/<request_id>` in `daemon-substrate-test-artifacts`. Includes the placeholder
-   result hash and the source weight key for traceability.
-5. Returns a `MockResult` envelope:
+3. Computes a placeholder result: SHA-256 of `(request_id || input_payload || weight_blob)`,
+   truncated to 32 bytes. This is deterministic, exercises the byte path, and produces nothing
+   meaningful. The hash domain is exactly those bytes in that order, with no separator.
+4. Returns a `MockResult` envelope:
 
 ```proto
 message MockResult {
-  string request_id    = 1;
-  bytes  result_hash   = 2;  // the 32-byte placeholder
-  ObjectRef output_ref = 3;  // present only if write_output was true
-  int64  weight_bytes  = 4;  // length of the weight blob read (for assertion)
-  bool   cache_hit     = 5;  // whether the weight came from cache
+  string request_id      = 1;
+  bytes  result_payload  = 2;  // the 32-byte placeholder
 }
 ```
 
@@ -92,8 +91,8 @@ MinIO content:
 
 - weights are deterministic byte patterns (see [minio_buckets.md](minio_buckets.md))
 - the result hash is SHA-256 of inputs
-- the output JSON includes only request_id and result_hash; no timestamps, no random IDs, no
-  locale-dependent ordering
+- the result payload includes only the deterministic hash bytes; no timestamps, no random IDs,
+  no locale-dependent ordering
 
 Integration tests assert exact result bytes when needed; this lets the harness pin down
 regressions in the substrate's request/response plumbing without flake.

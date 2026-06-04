@@ -23,13 +23,20 @@
 
 ## Top-level commands
 
+Current implementation note: Phase 8 Sprint 8.6 implements live Cabal delegation for
+`test ...`, concrete kind / kubectl / helm / Docker execution for `cluster ...` actions,
+live Pulsar and MinIO admin operations through the dependency pods, PVC-backed dependency
+state, live worker / orchestrator `service` loops, managed Apple edge-port forwarding, and
+Apple live workflow handoff. Full kind-cluster readiness remains active because Linux CPU
+validation is still open.
+
 | Command | Purpose | Long-running? | Idempotent? |
 |---------|---------|---------------|-------------|
 | `daemon-substrate-test cluster up` | Bring up the kind cluster + harness workloads | no | yes |
 | `daemon-substrate-test cluster down` | Tear down the kind cluster | no | yes |
-| `daemon-substrate-test cluster status` | Report cluster lifecycle state | no | yes (read-only) |
+| `daemon-substrate-test cluster status` | Report current kind/node status; target lifecycle state | no | yes (read-only) |
 | `daemon-substrate-test test unit` | Run `daemon-substrate-unit` test suite | no | yes |
-| `daemon-substrate-test test integration` | Run `daemon-substrate-integration` test suite | no | yes (requires running cluster) |
+| `daemon-substrate-test test integration` | Run `daemon-substrate-integration` test suite; target live suite requires a running cluster | no | yes |
 | `daemon-substrate-test test lint` | Run lint suite (ormolu, hlint, doc, proto) | no | yes |
 | `daemon-substrate-test test all` | Run lint + unit + integration in order | no | yes |
 | `daemon-substrate-test service --role worker --config <path>` | Run the worker daemon | **yes** | n/a |
@@ -41,11 +48,14 @@
 
 Reconciles the kind cluster to the supported topology described in
 [../engineering/cluster_topology.md](../engineering/cluster_topology.md). Steps in order:
-kind create, manual StorageClass, Helm dependency build, Harbor bootstrap, Pulsar bootstrap,
-MinIO bootstrap + seed, ConfigMap render, orchestrator Deployment, worker Deployment (Linux
-CPU cohort), edge-port discovery.
+kind create, manual StorageClass and PVs, local image build and kind image-load, Helm
+dependency build and release upgrade, dependency readiness waits, Pulsar bootstrap, MinIO
+bootstrap + seed, ConfigMap render, orchestrator Deployment, worker Deployment (Linux CPU
+cohort), edge-port discovery.
 
-Safe to re-run after any partial failure; resumes at the first phase that is not yet `Ready`.
+Safe to re-run after any partial failure. The current runner executes the idempotent action
+plan in order; existing resources are reused or verified by the underlying tool/admin action,
+and an already-existing kind cluster is reported as a successful no-change action.
 
 ### `cluster down`
 
@@ -56,16 +66,13 @@ Reconciles cluster absence. Preserves `./.data/`, `./.build/`, the project conta
 
 Read-only. Reports:
 
-- `lifecyclePhase` (one of `Load`, `Prereq`, `Acquire`, `Ready`, `Serve`, `Drain`, `Exit`;
-  the seven-phase `Daemon.Lifecycle.LifecyclePhase` — see
-  [../../DEVELOPMENT_PLAN/system-components.md § Lifecycle phases](../../DEVELOPMENT_PLAN/system-components.md))
-- `lifecycleDetail`
-- `lifecycleHeartbeatAt`
 - node readiness
-- in-cluster workload readiness (Harbor, Pulsar, MinIO, orchestrator, worker)
-- the chosen edge port
+- known kind clusters
 
-Does not mutate Kubernetes resources, repo-local state, or the edge-port record.
+The target status report also includes `lifecyclePhase`, `lifecycleDetail`,
+`lifecycleHeartbeatAt`, in-cluster workload readiness, and the chosen edge port. That richer
+report is part of the remaining full-`Ready` cluster gate. The current command does not mutate
+Kubernetes resources, repo-local state, or the edge-port record.
 
 ### `test unit`
 
@@ -73,13 +80,14 @@ Invokes `cabal test daemon-substrate-unit`. Pure Haskell tests; no cluster requi
 
 ### `test integration`
 
-Preflight: verifies the cluster is `Ready`; fails fast if not. Then invokes
-`cabal test daemon-substrate-integration`. Asserts the surface described in
+Invokes `cabal test daemon-substrate-integration`. The target preflight verifies the cluster
+is `Ready` and fails fast if not; that gate becomes authoritative after Linux CPU live
+validation closes. The suite asserts the surface described in
 [../development/testing_strategy.md § test integration](../development/testing_strategy.md).
 
 ### `test lint`
 
-Runs ormolu, hlint, doc validator (when implemented), proto validator.
+Runs ormolu, hlint, the doc validator, and the proto validator.
 
 ### `test all`
 
@@ -126,8 +134,11 @@ happens at the Dhall layer, not at the CLI layer. The cohort (`apple-silicon` vs
 | `hostbootstrap cluster up` | Build artifact (binary on Apple, container on Linux); launch per the model declared in `hostbootstrap.dhall` |
 | `hostbootstrap cluster down` | Tear down (preserves `./.data/`) |
 | `hostbootstrap cluster delete` | Thorough teardown (still preserves `./.data/`) |
-| `hostbootstrap cluster status` | Report status (delegates inward to `daemon-substrate-test cluster status`) |
 | `hostbootstrap run <cmd...>` | Dispatch into the project container (Linux) or run the host binary directly (Apple) |
+
+The installed `hostbootstrap` CLI currently exposes `cluster up`, `cluster down`, and
+`cluster delete`; status reporting is owned by the inner `daemon-substrate-test cluster
+status` command.
 
 See [../engineering/hostbootstrap_integration.md](../engineering/hostbootstrap_integration.md)
 for the boundary between outer and inner commands.

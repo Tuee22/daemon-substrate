@@ -11,7 +11,7 @@
 ## TL;DR
 
 - A consumer of `daemon-substrate` runs one or more **Worker** daemons (per physical node, on or
-  off cluster) and an **Orchestrator** daemon (always off cluster).
+  off cluster) and an **Orchestrator** daemon (always in-cluster).
 - Workers are stateless and own the acceleration hardware on their node. Orchestrators are
   stateless and own request fan-in, batching, fan-out, result fan-back, and WAN→MinIO weight
   hydration.
@@ -42,7 +42,13 @@ Kubernetes, `.cache/` under the daemon's working tree on host).
 - Fetch any model weights or blob inputs the engine needs from MinIO, caching locally if
   beneficial.
 - Publish engine results back to Pulsar.
-- Acknowledge or negatively acknowledge the request based on engine outcome.
+- Acknowledge the request after all per-request `WorkerResult` messages are published, or
+  negatively acknowledge malformed / unpublishable work so Pulsar can redeliver it.
+
+`Daemon.Worker` implements this path as `runWorker` plus `workerStep`: subscribe to the work
+topic, decode an `OrchestratorToWorker` batch, materialize inline or `ObjectRef` request
+payloads, dispatch a batch-native `HasEngine.engineCall`, publish `WorkerResult` success or
+failure envelopes, then ack the source message.
 
 ### Statelessness
 
@@ -114,6 +120,24 @@ if they want, but it is not part of the substrate's contract.
    Civitai, public dataset registries) into MinIO before any Worker is dispatched against them.
    Workers never touch the WAN; they only ever read from MinIO.
 
+`Daemon.Orchestrator` implements the current base-loop surface as `orchestratorAcquire`,
+`orchestratorStep`, and `runOrchestrator`: provision the consumer-supplied `Topology` topic
+inventory, attach shared ingress/result subscriptions, dispatch `WorkflowEvent` messages to
+workers as `OrchestratorToWorker` batches, forward `WorkerResult` messages to response
+topics, and expose reverse topology subscription order for drain.
+`runOrchestratorWithReconciler` is the current concurrent execution helper: it starts an
+orchestrator action and a reconciler action in separate lightweight threads, preserves each
+loop's typed result, captures unexpected exceptions as text, and returns after both finish.
+
+The reusable `Daemon.Bridge.runBridge` helper covers the orchestrator's simpler fan-back /
+translation paths: consume one topic, transform or route the payload, publish to another
+topic, then acknowledge the source message.
+
+The reusable `Daemon.Bootstrap.runFanInBootstrap` helper covers WAN-hydration-style fan-in
+work: consume a request, run consumer-supplied work, store the ready payload in MinIO, publish
+a deduplicated ready event with an `ObjectRef`, and retry by negative acknowledgement on
+failure.
+
 ### Statelessness
 
 Same as the Worker, with the multi-replica twist: any replica can be killed at any time, and
@@ -130,6 +154,24 @@ provides the base loop (`runOrchestrator`), the lifecycle scaffolding, and the t
 logic and Dhall shape via the `app` type parameter. The substrate does not prescribe a
 canonical orchestrator behavior; it prescribes the shape any orchestrator must fit into.
 
+## Lifecycle State Machine
+
+`Daemon.Lifecycle` implements the shared seven-phase state machine used by both roles:
+`Load`, `Prereq`, `Acquire`, `Ready`, `Serve`, `Drain`, `Exit`. The runtime record holds the
+decoded `BootConfig`, `LiveConfig`, `LifecyclePolicy`, acquired client handles, subscription
+handles, the current phase, readiness state, and the last lifecycle error. Phase actions are
+callback-driven so later base-loop phases can plug in real client acquisition, probes,
+subscriptions, serving, and drain behavior without changing the phase ordering.
+
+The readiness flag is true only while the runtime is in `Ready` or `Serve`; entering `Drain`
+or `Exit` clears readiness. If a phase action fails, `runDaemonLifecycle` stops immediately
+and returns the failed runtime plus a `LifecycleError` naming the failed phase.
+`Daemon.Signal` maps SIGHUP to a reload request and SIGTERM / SIGINT to `Drain`.
+`Daemon.Lifecycle.Endpoints` renders `/healthz`, `/readyz`, and `/metrics` from the runtime;
+`/readyz` returns 200 only while the runtime readiness flag is true.
+`runService` is the consumer entry point around this scaffold: it parses role/config paths,
+decodes Dhall, enters the lifecycle, and invokes the consumer callback at `Serve`.
+
 ### Concurrent reconciler thread
 
 The orchestrator daemon also runs `runReconciler` as a **second concurrent thread inside the
@@ -142,6 +184,12 @@ fan-out work. The two threads share the substrate's capability clients (`HasPuls
 The reconciler owns the lifecycle of every Pulsar topic and MinIO bucket / object declared in
 the consumer's `LifecyclePolicy` (creation, archival, deletion, MinIO orphan-scan). See
 [lifecycle_policy.md](lifecycle_policy.md) for the full design.
+
+`Daemon.Reconciler` currently exposes `reconcilerAcquireLeadership`, `reconcileOnce`, and
+`runReconciler`. The implementation performs idempotent topic/bucket reconciliation, audit
+publish/replay, and filesystem-backend orphan cleanup for unreachable declared-prefix
+objects; `Daemon.Orchestrator.runOrchestratorWithReconciler` is the helper that runs the
+orchestrator and reconciler actions together.
 
 ## What is not a daemon role
 

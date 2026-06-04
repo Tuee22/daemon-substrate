@@ -1,0 +1,7 @@
+.git/
+.build/
+.data/
+.cache/
+dist-newstyle/
+cabal.project.local
+.ghc.environment.*

@@ -11,9 +11,8 @@
 
 ## Phase Status
 
-**Status**: Blocked
-**Blocked by**: Phase 5
-**Implementation**: none yet
+**Status**: Done
+**Implementation**: Sprints 6.1, 6.2, and 6.3 are implemented and validated.
 
 ## Phase Objective
 
@@ -27,9 +26,15 @@ The outer `hostbootstrap cluster up` wiring lands in Phase 7.
 
 ## Sprints
 
-### Sprint 6.1: Cluster lifecycle Haskell modules [Planned]
+### Sprint 6.1: Cluster lifecycle Haskell modules [Done]
 
-**Status**: Planned
+**Status**: Done
+**Implementation**: `src/Daemon/Cluster/Types.hs`, `src/Daemon/Cluster/Kind.hs`,
+`src/Daemon/Cluster/Storage.hs`, `src/Daemon/Cluster/Helm.hs`,
+`src/Daemon/Cluster/Harbor.hs`, `src/Daemon/Cluster/Pulsar.hs`,
+`src/Daemon/Cluster/MinIO.hs`, `src/Daemon/Cluster/Workload.hs`,
+`src/Daemon/Cluster/EdgePort.hs`, `src/Daemon/Cluster/Plan.hs`, `daemon-substrate.cabal`,
+`test/unit/Main.hs`
 **Docs to update**: `documents/engineering/cluster_topology.md`,
 `documents/operations/cluster_bootstrap_runbook.md`, `system-components.md`
 
@@ -50,16 +55,26 @@ edge port discovery.
 - `src/Daemon/Cluster/MinIO.hs` (MinIO install + bucket seeding)
 - `src/Daemon/Cluster/Workload.hs` (orchestrator / worker Deployment apply)
 - `src/Daemon/Cluster/EdgePort.hs` (port discovery + persistence)
+- `src/Daemon/Cluster/Types.hs` and `src/Daemon/Cluster/Plan.hs` (shared action vocabulary and
+  ordered bring-up / status / teardown plans)
 
 #### Validation
 
-Unit tests cover the plan-generation logic (which `kubectl` invocations in which order). Live
-cluster bring-up validated in Phase 8.
+Validated with:
 
-### Sprint 6.2: Helm chart [Planned]
+- `cabal build all --enable-tests`
+- `cabal test daemon-substrate-unit daemon-substrate-haskell-style`
 
-**Status**: Planned
-**Blocked by**: 6.1
+Unit tests cover the plan-generation logic: phase ordering, Linux vs Apple worker placement,
+worker anti-affinity rendering, and edge-port selection. Live cluster bring-up is validated in
+Phase 8.
+
+### Sprint 6.2: Helm chart [Done]
+
+**Status**: Done
+**Implementation**: `chart/Chart.yaml`, `chart/values.yaml`,
+`chart/values/apple-silicon.yaml`, `chart/values/linux-cpu.yaml`, `chart/templates/*.yaml`,
+`chart/charts/harbor/*`, `chart/charts/pulsar/*`, `chart/charts/minio/*`
 **Docs to update**: `documents/engineering/cluster_topology.md`, `system-components.md`
 
 #### Objective
@@ -83,13 +98,23 @@ templates.
 
 #### Validation
 
-`helm template ./chart -f chart/values/linux-cpu.yaml` and `-f chart/values/apple-silicon.yaml`
-both produce valid YAML; the worker Deployment renders only for the linux-cpu values.
+Validated with:
 
-### Sprint 6.3: Dhall configs for orchestrator and worker [Planned]
+- `helm template daemon-substrate-test ./chart -f chart/values/linux-cpu.yaml`
+- `helm template daemon-substrate-test ./chart -f chart/values/apple-silicon.yaml`
+- render assertion that the Linux CPU cohort includes the worker Deployment and
+  `podAntiAffinity`, while the Apple Silicon cohort omits the worker Deployment
 
-**Status**: Planned
-**Blocked by**: 6.1, 6.2
+The chart uses local Harbor / Pulsar / MinIO dependency charts so render validation is
+deterministic and does not require network chart repositories.
+
+### Sprint 6.3: Dhall configs for orchestrator and worker [Done]
+
+**Status**: Done
+**Implementation**: `dhall/orchestrator.dhall`, `dhall/worker.dhall`, `dhall/live.dhall`,
+`dhall/lifecycle-policy.dhall`, `chart/files/orchestrator.dhall`, `chart/files/worker.dhall`,
+`chart/files/live.dhall`, `chart/files/lifecycle-policy.dhall`, `chart/templates/configmap-*.yaml`,
+`test/unit/Main.hs`
 **Docs to update**: `documents/architecture/library_consumption_model.md`, `system-components.md`
 
 #### Objective
@@ -108,8 +133,17 @@ Land the test-harness Dhall configs the orchestrator and worker each consume.
 
 #### Validation
 
-`daemon-substrate-test service --role orchestrator --config dhall/orchestrator.dhall` boots
-through `Load → Prereq → Acquire → Ready → Serve` against a running cluster. Same for worker.
+Validated with:
+
+- `cabal build all --enable-tests`
+- `cabal test daemon-substrate-unit daemon-substrate-haskell-style`
+- `helm template daemon-substrate-test ./chart -f chart/values/linux-cpu.yaml`
+- `helm template daemon-substrate-test ./chart -f chart/values/apple-silicon.yaml`
+- render assertion that the chart packages `orchestrator.dhall`, `worker.dhall`, `live.dhall`,
+  and `lifecycle-policy.dhall`
+
+Live service boot against a running cluster is validated in Phase 8, when the
+`daemon-substrate-test` executable and integration harness land.
 
 ## Documentation Requirements
 

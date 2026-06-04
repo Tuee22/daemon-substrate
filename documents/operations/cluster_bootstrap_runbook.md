@@ -18,8 +18,9 @@
 - Both commands are idempotent. Safe to re-run.
 - `cluster down` (outer or inner) preserves `./.data/` and `./.build/` so the next `up` is
   fast.
-- Long-running phases (Docker image build, Harbor publication) refresh a heartbeat roughly
-  every 30 seconds. Wall-clock duration alone is not failure; heartbeat staleness is.
+- Long-running phases (Docker image build, dependency rollout) are expected to refresh a
+  heartbeat in the target lifecycle reporter. Until that lands, streamed action progress,
+  subprocess output, and action completion are the current progress indicators.
 
 ## Ownership boundary
 
@@ -32,13 +33,23 @@
 See [../engineering/hostbootstrap_integration.md](../engineering/hostbootstrap_integration.md)
 for the full boundary statement.
 
+Current implementation note: Phase 6 has landed the `Daemon.Cluster.*` action-plan modules,
+the Helm chart render surface, and the packaged harness Dhall configs. Phase 8 Sprint 8.6
+adds concrete `kind`, `kubectl`, `helm`, Docker image build, kind image-load, Kubernetes
+apply / rollout wait, Pulsar admin, MinIO admin, and edge-port execution. The dependency
+charts are deployable local Harbor / Pulsar / MinIO StatefulSets with PVC-backed state, and
+the service command runs live worker / orchestrator loops. Apple edge-port forwarding,
+host-worker handoff, and a live request -> orchestrator -> host worker -> response smoke
+handoff are validated. Full `Ready` cluster reconciliation remains active until Linux CPU
+validation closes.
+
 ## Bring-up
 
 Apple Silicon (host-native worker via LaunchDaemon; in-cluster reconcilers on host):
 
 ```bash
 hostbootstrap cluster up                           # outer: build binary, install LaunchDaemon
-./.build/daemon-substrate-test cluster up          # inner: reconcile kind cluster (auto-invoked)
+./.build/daemon-substrate-test cluster up          # inner: reconcile kind cluster
 ```
 
 Linux CPU (outer container; in-cluster reconcilers inside the container):
@@ -51,31 +62,42 @@ hostbootstrap run daemon-substrate-test cluster up # invoke inner directly if ne
 
 `cluster up` reconciles, in order:
 
-1. **Kind cluster**: create if missing; verify control-plane + three worker nodes are ready
+1. **Kind cluster**: create if missing; treat an already-existing cluster as a successful
+   no-change action; verify the cohort-specific node count is ready
+   (Apple Silicon: one worker; Linux CPU: three workers)
 2. **Manual storage**: install the `daemon-substrate-manual` StorageClass; provision durable
-   PVs into `./.data/kind/<cohort>/<namespace>/<release>/...`
-3. **Helm dependencies**: build/refresh Harbor, Pulsar, MinIO chart dependencies
-4. **Harbor bootstrap**: bring up Harbor, wait for its TLS cert, push
-   `daemon-substrate-test:local` to it
-5. **Pulsar bootstrap**: bring up Pulsar broker; create the test-harness namespace; verify
-   topics auto-create on first publish
-6. **MinIO bootstrap**: bring up MinIO; create the two harness buckets; seed mock weight
+   PVs into the kind node mount rooted at
+   `/daemon-substrate-data/<cohort>/daemon-substrate`, backed by host files under
+   `./.data/kind/<cohort>/daemon-substrate/...`
+3. **Image build**: build `daemon-substrate-test:local` from the thin project Dockerfile and
+   load it directly into the kind cluster
+4. **Helm dependencies**: build/refresh Harbor, Pulsar, MinIO chart dependencies and upgrade
+   the harness release
+5. **Dependency readiness**: wait for Harbor, Pulsar, and MinIO StatefulSets to become ready
+6. **Pulsar bootstrap**: run `pulsar-admin` inside the broker pod to create the
+   test-harness tenant, namespace, and required topics idempotently
+7. **MinIO bootstrap**: run `mc` inside the MinIO sidecar to create the three harness buckets
+   (`weights`, `artifacts`, `archives`) and seed the mock weight
    blobs
-7. **ConfigMaps**: render `configmap-orchestrator` and `configmap-worker` from staged Dhall
-8. **Orchestrator Deployment**: roll out; wait for readiness
-9. **Worker Deployment** (Linux CPU cohort only): roll out two replicas with anti-affinity
-10. **Edge port discovery**: pick port (9090 first; increment on conflict); persist to
-    `edge-port.json`; print to operator
+8. **ConfigMaps**: render `configmap-orchestrator` and `configmap-worker` from the packaged
+   chart Dhall files
+9. **Orchestrator Deployment**: roll out; wait for readiness
+10. **Worker Deployment** (Linux CPU cohort only): roll out two replicas with anti-affinity
+11. **Edge port discovery / forwarding**: pick a base port (9090 first; increment on
+    conflict); persist `pulsarPort`, `pulsarAdminPort`, and `minioPort` to `edge-port.json`;
+    on Apple Silicon, start matching local port-forwards and record their pids
 
-Each phase emits a heartbeat. `cluster status` displays the current phase, the heartbeat
-timestamp, and any per-phase detail.
+Each phase emits an action result. The target heartbeat / lifecycle report is still tracked by
+the full `Ready` gate below; during `cluster up`, the current runner prints each action as it
+starts and records no-change results such as `kind cluster already exists`. The current
+`cluster status` implementation reports kind clusters and node readiness.
 
 ## "Ready" definition
 
 The cluster is `Ready` when **all six** conditions hold:
 
-1. Kind node count matches the count declared in the staged Dhall (control plane + three
-   worker nodes today).
+1. Kind node count matches the cohort topology (Apple Silicon: control plane + one worker;
+   Linux CPU: control plane + three workers).
 2. The Pulsar admin API is reachable on the chosen edge port.
 3. Every MinIO bucket named in `LifecyclePolicy` exists.
 4. The orchestrator Deployment is `2/2` Ready (both replicas healthy).
@@ -84,10 +106,18 @@ The cluster is `Ready` when **all six** conditions hold:
 6. `runReconciler` has completed at least one full tick (audit-topic entry observed for the
    current `LifecyclePolicy` generation).
 
-If any condition is not met, `cluster status` reports the failing condition under
-`lifecycleDetail`. This is the same definition used by `daemon-substrate-test test integration`
-preflight (see [../reference/cli_surface.md § test integration](../reference/cli_surface.md)
-and [../development/testing_strategy.md](../development/testing_strategy.md)).
+The target lifecycle status report will surface any failing condition under
+`lifecycleDetail`. This is the same definition used by the target
+`daemon-substrate-test test integration` preflight (see
+[../reference/cli_surface.md § test integration](../reference/cli_surface.md) and
+[../development/testing_strategy.md](../development/testing_strategy.md)).
+
+Current implementation caveat: the Apple Silicon inner cluster now satisfies the dependency
+rollout, PVC preservation, in-place `cluster up`, reconciler Failover leadership,
+host-worker edge-port handoff, and live workflow-handoff portions of this definition, but the
+full `Ready` gate is still open until Linux CPU validation runs. `cluster status` is
+currently a read-only kind / node status command; lifecycle-detail reporting and
+integration-test preflight use the target definition once the Linux CPU gate lands.
 
 ## Status
 
@@ -96,7 +126,8 @@ and [../development/testing_strategy.md](../development/testing_strategy.md)).
 hostbootstrap run daemon-substrate-test cluster status   # Linux
 ```
 
-Reports:
+Reports the known kind clusters and node readiness through the repo-local kubeconfig. The
+target status report also includes:
 
 - current `lifecyclePhase` (one of `Load`, `Prereq`, `Acquire`, `Ready`, `Serve`, `Drain`,
   `Exit`; the seven-phase `Daemon.Lifecycle.LifecyclePhase` defined in
@@ -104,7 +135,6 @@ Reports:
   Sprint 3.4 and serialized to the wire by `proto/daemon_substrate/lifecycle.proto`)
 - `lifecycleDetail`: free-form descriptor of what the current phase is doing
 - `lifecycleHeartbeatAt`: monotonic timestamp of the most recent heartbeat update
-- cluster node readiness summary
 - Harbor / Pulsar / MinIO pod readiness summary
 - orchestrator and worker Deployment readiness
 
@@ -112,18 +142,19 @@ Reports:
 
 ## Heartbeat-driven progress interpretation
 
-Some phases run for minutes (Docker image build on first invocation, Harbor's TLS cert
-issuance, MinIO seeding). The operator should not interpret long durations as failure. The
-heartbeat refreshes every ~30 seconds while the phase is making progress; only a stalled
-heartbeat (no update for several minutes) is a failure signal.
+Some phases run for minutes (Docker image build on first invocation, dependency rollout,
+MinIO seeding). The operator should not interpret long durations as failure. The target
+lifecycle reporter refreshes its heartbeat every ~30 seconds while a phase is making
+progress; until that reporter lands, subprocess output and action completion are the current
+progress indicators.
 
 Typical bring-up durations:
 
 | Phase | First run | Subsequent runs |
 |-------|-----------|-----------------|
-| Docker image build (Linux only) | 5–10 min | < 30 s (cached layers) |
+| Harness image build | 5–10 min | < 30 s (cached layers) |
 | Kind cluster create | 1–2 min | 0 (already exists) |
-| Harbor bootstrap | 2–4 min | < 30 s |
+| Dependency rollout | 2–4 min | < 30 s |
 | Pulsar bootstrap | 1–2 min | < 30 s |
 | MinIO bootstrap + seed | < 30 s | < 10 s |
 | Workload deployment | < 30 s | < 10 s |
@@ -151,15 +182,19 @@ derived state) but still preserves `./.data/`.
 ## Edge port
 
 `daemon-substrate-test cluster up` tries to bind port 9090 first; on conflict it increments
-linearly until an open port is found. The chosen port is:
+linearly until an open base port is found. The chosen ports are:
 
 - persisted under `./.build/edge-port.json` (Apple) or `./.data/runtime/edge-port.json` (Linux)
 - printed to the operator during bring-up
 - read by the host-native Apple worker at startup to find the in-cluster Pulsar / MinIO
   endpoints
 
-`cluster down` does not delete the edge-port record, so a subsequent `up` keeps the same port
-if it is still available.
+The record maps `pulsarPort` to Pulsar broker `6650`, `pulsarAdminPort` to Pulsar admin
+`8080`, and `minioPort` to MinIO `9000`. On Apple Silicon, `cluster up` starts detached
+`kubectl port-forward` processes for those mappings and writes their pids to
+`edge-port.json.pids`; `cluster down` terminates those recorded pids before deleting the
+kind cluster. `cluster down` does not delete the edge-port record, so a subsequent `up` keeps
+the same base port if it is still available.
 
 ## Kubeconfig
 

@@ -1,8 +1,8 @@
 # Documents Index
 
-**Status**: Governed orientation document
+**Status**: Supporting reference
 **Supersedes**: N/A
-**Canonical homes**: [documentation_standards.md](documentation_standards.md), [../DEVELOPMENT_PLAN/README.md](../DEVELOPMENT_PLAN/README.md)
+**Referenced by**: [../README.md](../README.md), [documentation_standards.md](documentation_standards.md), [../DEVELOPMENT_PLAN/README.md](../DEVELOPMENT_PLAN/README.md)
 
 > **Purpose**: Orient readers to the `documents/` tree and link to the canonical documentation
 > standards and per-topic doctrine homes.
