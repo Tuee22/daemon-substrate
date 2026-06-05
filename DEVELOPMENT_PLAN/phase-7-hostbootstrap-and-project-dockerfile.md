@@ -6,22 +6,27 @@
 
 > **Purpose**: Land the project-side files that wire `daemon-substrate` onto
 > [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap): the typed `hostbootstrap.dhall`
-> at the repository root, and the thin `docker/linux-substrate.Dockerfile` (`FROM
-> ${BASE_IMAGE}` + project build). After this phase, an operator can run
-> `hostbootstrap cluster up` on either cohort and reach a `Ready` cluster.
+> at the repository root, and the thin `docker/Dockerfile` (`FROM
+> ${BASE_IMAGE}` + project build).
 
 ## Phase Status
 
 **Status**: Done
 
-The current Phase 7 surface is the acceleration-keyed `hostbootstrap` schema:
-`hostbootstrap.dhall` declares a single `H.Accel.Cpu` `Container` target,
-`hostbootstrap-hostbinary.dhall` and `hostbootstrap-hostdaemon.dhall` declare the same `Cpu`
-target under the host-native models, and `docker/linux-substrate.Dockerfile` is a thin
+The current Phase 7 surface is the substrate-keyed `hostbootstrap` schema:
+`hostbootstrap.dhall` maps `AppleSilicon` to `HostDaemon`, `LinuxCpu` to `Container`, and
+`LinuxGpu` to `HostBinary`. The project name is `daemon-substrate-test`, matching the command
+hostbootstrap builds and invokes. `docker/Dockerfile` is a thin
 `FROM ${BASE_IMAGE}` project layer with the container-only Cabal project file, a
-`daemon-substrate-test check-code` build gate, and a tini-wrapped project entrypoint. Earlier
-host-keyed bootstrap details and the shell-form service command are preserved only in the
-completed cleanup ledger.
+`daemon-substrate-test check-code` build gate, and a tini-wrapped project entrypoint with no
+default `CMD`.
+
+`hostbootstrap cluster up/down/delete` forwards plain `daemon-substrate-test cluster
+up/down/delete`. `HostDaemon` workers run only as caller-owned foreground
+`hostbootstrap daemon run` processes after `cluster up`; callers stop that process before
+`cluster down` / `cluster delete`. There are no per-model spec files, explicit handoff commands,
+launchd/systemd unit edits, PID-file daemon wrappers, development mode, or restart-after-reboot
+Docker containers.
 
 **Remaining work**: none.
 
@@ -29,11 +34,9 @@ completed cleanup ledger.
 
 Make the substrate operable on top of `hostbootstrap`. The in-cluster reconciliation logic
 exists in Haskell after Phase 6; this phase ships the outer wiring as a typed Dhall config and
-a thin project Dockerfile. Substrate detection, host-prereq install, container / daemon
-lifecycle, and LaunchDaemon installation are owned by `hostbootstrap` and are not
-re-implemented here. After Phase 7 closes, the workflow described in
-`documents/operations/apple_silicon_runbook.md` and
-`documents/operations/linux_cpu_runbook.md` is real on both cohorts.
+a thin project Dockerfile. Substrate detection, host prerequisite checks, base image selection,
+artifact build, and outer lifecycle dispatch are owned by `hostbootstrap` and are not
+re-implemented here.
 
 The boundary is documented in
 [`../documents/engineering/hostbootstrap_integration.md`](../documents/engineering/hostbootstrap_integration.md).
@@ -55,59 +58,57 @@ injected by `hostbootstrap` as `H`; the file has no import line.
 
 #### Deliverables
 
-- `hostbootstrap.dhall` declaring one `H.target H.Accel.Cpu` wrapped in
-  `H.Model.Container`, with `dockerfile = "docker/linux-substrate.Dockerfile"`, `service =
-  True`, and mounts for `./.data` (durable cluster state) and `/var/run/docker.sock` (so the
-  container can drive its own `kind`)
-- shape conforms to the canonical example in
-  `../documents/engineering/hostbootstrap_integration.md`
+- `hostbootstrap.dhall` declares project `daemon-substrate-test`.
+- `AppleSilicon` uses `H.cluster (H.Model.HostDaemon ...)` with daemon arguments
+  `service --role worker --config dhall/worker.dhall`.
+- `LinuxCpu` uses `H.cluster (H.Model.Container ...)` with the thin Dockerfile and mounts for
+  `./.data` and `/var/run/docker.sock`.
+- `LinuxGpu` uses `H.cluster (H.Model.HostBinary ...)`.
+- Host-native models include the optional project container artifact where the harness needs the
+  project image for kind workloads.
 
 #### Validation
 
 Validated with repo-local static shape checks and the upstream `hostbootstrap` parser. The
-checks verify the injected-`H` Dhall has no imports, declares `H.config`, carries a single
-`H.target H.Accel.Cpu`, uses the `Container` model, and includes the durable `.data` and
-Docker-socket mounts.
+checks verify the injected-`H` Dhall has no imports, declares `H.config`, carries substrate
+entries for Apple Silicon, Linux CPU, and Linux GPU, and contains no explicit build, handoff,
+service, or restart fields.
 
 ### Sprint 7.2: Thin project Dockerfile [Done]
 
 **Status**: Done
-**Implementation**: `docker/linux-substrate.Dockerfile`
+**Implementation**: `docker/Dockerfile`
 **Docs to update**: `../documents/engineering/cluster_topology.md`,
 `../documents/engineering/hostbootstrap_integration.md`, `system-components.md`
 
 #### Objective
 
-Land `docker/linux-substrate.Dockerfile` as the thin project container. The file inherits
-from the `hostbootstrap` base tag (passed via `--build-arg BASE_IMAGE`) and runs only the
-project's own build steps. The heavy toolchain (GHC 9.12, Cabal, kube tools, `protoc`,
-formatters, warm Haskell store) lives in the base.
+Land `docker/Dockerfile` as the thin project container. The file inherits from
+the `hostbootstrap` base tag passed via `BASE_IMAGE` and runs only the project's own build
+steps. The heavy toolchain lives in the base.
 
 #### Deliverables
 
-- `docker/linux-substrate.Dockerfile`:
-  - `ARG BASE_IMAGE`
-  - `FROM ${BASE_IMAGE}`
-  - copies the project source and runs
-    `cabal install --project-file=cabal.project.container --installdir /usr/local/bin --install-method=copy --overwrite-policy=always exe:daemon-substrate-test`
-  - runs `daemon-substrate-test check-code`
-  - declares a tini-wrapped `ENTRYPOINT` for `/usr/local/bin/daemon-substrate-test`
-  - declares `CMD ["cluster", "up", "--model", "container", "--stay-resident"]` so the
-    `Container` model's long-running service starts the inner reconciler by default and remains
-    resident after successful reconciliation
-  - no toolchain installation, no `RUN apt`, no `RUN curl ... ghcup`
+- `ARG BASE_IMAGE`
+- `FROM ${BASE_IMAGE}`
+- copy project source
+- run `cabal install --project-file=cabal.project.container --installdir /usr/local/bin --install-method=copy --overwrite-policy=always exe:daemon-substrate-test`
+- run `daemon-substrate-test check-code`
+- declare `ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/daemon-substrate-test"]`
+- no default `CMD`
+- no toolchain installation
 
 #### Validation
 
 Validated with a repo-local static boundary check: the Dockerfile starts with `ARG BASE_IMAGE`
 and `FROM ${BASE_IMAGE}`, uses `cabal.project.container`, runs
-`daemon-substrate-test check-code`, declares the tini-wrapped entrypoint and resident container
-`CMD`, and contains no package-manager, `curl`, or `ghcup` toolchain installation.
+`daemon-substrate-test check-code`, declares the tini-wrapped entrypoint, has no `CMD`, and
+contains no package-manager, `curl`, or `ghcup` toolchain installation.
 
 ### Sprint 7.3: End-to-end bring-up [Done]
 
 **Status**: Done
-**Implementation**: `hostbootstrap.dhall`, `docker/linux-substrate.Dockerfile`,
+**Implementation**: `hostbootstrap.dhall`, `docker/Dockerfile`,
 `.build/daemon-substrate-test`, `src/Daemon/Test/CLI/Service.hs`
 **Docs to update**: `../documents/operations/cluster_bootstrap_runbook.md`,
 `../documents/operations/apple_silicon_runbook.md`,
@@ -115,59 +116,27 @@ and `FROM ${BASE_IMAGE}`, uses `cabal.project.container`, runs
 
 #### Objective
 
-Validate that `hostbootstrap cluster up` reaches a `Ready` cluster on both cohorts, and that
-the lifecycle preserves `./.data/` across cycles.
+Validate that `hostbootstrap cluster up` reaches a `Ready` cluster for the selected target and
+that lifecycle commands preserve `./.data/`.
 
 #### Deliverables
 
-- runbook updates documenting verification steps (kubeconfig path, `launchctl list`
-  inspection on Apple, edge-port inspection)
-- documented `./.data/` preservation guarantee (`hostbootstrap` never deletes the mount)
-- on Apple Silicon, documented LaunchDaemon install / remove behavior on `hostbootstrap
-  cluster up` / `cluster down`
+- runbook updates documenting detected-host and forced-target flows
+- documented `./.data/` preservation guarantee
+- documented HostDaemon process ordering: caller runs foreground `hostbootstrap daemon run`
+  after `cluster up` and stops it before `cluster down` / `cluster delete`
+- documented reboot policy: operator reruns `hostbootstrap cluster up`
 
 #### Validation
 
-- Apple cohort outer lifecycle validated locally with:
-  - `hostbootstrap doctor --spec hostbootstrap.dhall`
-  - `hostbootstrap build --spec hostbootstrap.dhall`
-  - `hostbootstrap cluster up --spec hostbootstrap.dhall`
-  - `launchctl print system/com.hostbootstrap.daemon-substrate`
-  - `hostbootstrap cluster down --spec hostbootstrap.dhall`
+Validated with detected-host and forced-target bring-up flows. The live validation evidence is
+tracked in Phase 8, which owns the executable and integration readiness gate. Phase 7 validates
+the hostbootstrap boundary and project-file shape that those live flows consume.
 
-  The run built `.build/daemon-substrate-test`, installed
-  `/Library/LaunchDaemons/com.hostbootstrap.daemon-substrate.plist`, reported the
-  LaunchDaemon as `state = running` with the expected `service --role worker --config
-  dhall/worker.dhall` arguments, and removed the LaunchDaemon on `cluster down`.
-- Linux cohort: `hostbootstrap doctor --spec hostbootstrap.dhall` reports `linux-gpu`
-  (`amd64`) on the validated host, with Ubuntu 24.04, passwordless sudo, Docker daemon
-  access, and NVIDIA runtime checks passing. `hostbootstrap.dhall` maps that detected
-  substrate to the same CPU-flavored Container model used for Linux CPU validation.
-  `hostbootstrap build --spec hostbootstrap.dhall` builds
-  `daemon-substrate:linux-gpu-amd64` from the thin project Dockerfile. `hostbootstrap cluster
-  up --spec hostbootstrap.dhall` starts the long-running service container, runs
-  `daemon-substrate-test cluster up`, attaches the container to Docker's `kind` network,
-  exports the internal kind kubeconfig, waits for node readiness, deploys Harbor / Pulsar /
-  MinIO, rolls out the orchestrator and worker Deployments, and persists edge ports
-  `9090`/`9091`/`9092`.
-- Full cluster readiness: closed for the phase. Apple Silicon and Linux both reach `Ready`.
-  Linux validation included two consecutive inner `daemon-substrate-test cluster down` /
-  `cluster up` cycles against the same `.data` mount; both re-created kind, reattached the
-  retained PVs, rolled out dependencies and daemon workloads, and preserved the edge-port
-  record at base port `9090`.
-- Apple Silicon inner kind preserved-state validation has been exercised with:
-  - `daemon-substrate-test cluster down`
-  - `daemon-substrate-test cluster up`
-  - PV/PVC inspection showing Harbor, Pulsar, and MinIO claims bound
-  - Pulsar topic lookup returning the in-cluster advertised broker service
-  - persisted MinIO and Pulsar state under
-    `./.data/kind/apple-silicon/daemon-substrate/`
-
-### Sprint 7.4: Single `Cpu` target + tini ENTRYPOINT + check-code build gate [Done]
+### Sprint 7.4: Substrate-keyed targets + tini ENTRYPOINT + check-code build gate [Done]
 
 **Status**: Done
-**Implementation**: `hostbootstrap.dhall`, `hostbootstrap-hostbinary.dhall`,
-`hostbootstrap-hostdaemon.dhall`, `docker/linux-substrate.Dockerfile`
+**Implementation**: `hostbootstrap.dhall`, `docker/Dockerfile`
 **Docs to update**: `../documents/engineering/hostbootstrap_integration.md`,
 `../documents/engineering/cluster_topology.md`, `../documents/engineering/cabal_layout.md`,
 `../documents/operations/apple_silicon_runbook.md`,
@@ -178,38 +147,29 @@ the lifecycle preserves `./.data/` across cycles.
 
 #### Objective
 
-Migrate the project-side bootstrap wiring from the host-keyed schema to the acceleration-keyed
-schema: one `H.Accel.Cpu` target that runs on every host, the three execution models driven by
-separate `--spec` files, a tini-wrapped Dockerfile `ENTRYPOINT` with a `check-code` build gate,
-and a warm-store freeze scoped to container builds. `hostbootstrap` is installed via `pipx`.
+Keep one model per substrate in a single config, remove the per-model Dhall files, remove
+resident-container defaults, and align the project command with hostbootstrap's templated build
+and handoff rules.
 
 #### Deliverables
 
-- `hostbootstrap.dhall` rewritten to
-  `H.config { project = "daemon-substrate", targets = [ H.target H.Accel.Cpu ( H.Model.Container … ) ] }`
-  — a single `Cpu` target, no host-keyed entries, no `flavor` field (`HostReqs` is `{ ghc }`).
-- `hostbootstrap-hostbinary.dhall` and `hostbootstrap-hostdaemon.dhall` declaring the same
-  single `H.Accel.Cpu` target wrapped in `H.Model.HostBinary` / `H.Model.HostDaemon`; the
-  `HostDaemon` spec installs launchd on Apple and systemd on Linux from one declaration.
-- `docker/linux-substrate.Dockerfile` gains a tini-wrapped `ENTRYPOINT`, a
-  `RUN daemon-substrate-test check-code` build gate, and a default
-  `cluster up --model container --stay-resident` command that runs the inner reconciler and
-  keeps the service container resident (replacing the `CMD … sleep infinity` form).
-- the container build imports the warm-store `cabal.project.freeze`; native `HostBinary` /
-  `HostDaemon` builds do not.
+- single `hostbootstrap.dhall` with `AppleSilicon`, `LinuxCpu`, and `LinuxGpu` entries
+- `project = "daemon-substrate-test"`
+- no `hostbootstrap-hostbinary.dhall` or `hostbootstrap-hostdaemon.dhall`
+- no explicit build or handoff command fields
+- no launchd/systemd unit ownership
+- no hostbootstrap daemon start/stop or PID-file ownership
+- no default Dockerfile `CMD`
+- direct inner `--model` debugging override retained by `daemon-substrate-test`
+- `cluster delete` supported by the inner CLI
 
 #### Validation
 
-- Static checks confirm all three spec files use `H.config`, `targets`, and a single
-  `H.target H.Accel.Cpu`, with no `H.Substrate`, `H.entry`, `substrates`, `H.Flavor`, or
-  `flavor` fields.
-- The current upstream `hostbootstrap` schema parser loads the three specs as
-  `ContainerModel`, `HostBinaryModel`, and `HostDaemonModel`, all under project
-  `daemon-substrate` with one `cpu` target.
-- Static Dockerfile checks confirm `ARG BASE_IMAGE`, `FROM ${BASE_IMAGE}`, no toolchain
-  installation, `--project-file=cabal.project.container`, `RUN daemon-substrate-test
-  check-code`, a tini-wrapped `ENTRYPOINT`, and `CMD ["cluster", "up", "--model",
-  "container", "--stay-resident"]`.
+Static checks confirm the single Dhall file uses `H.config`, `substrates`, `H.entry`, and the
+three expected substrate/model pairs. Dockerfile checks confirm the tini-wrapped entrypoint,
+`check-code` gate, and absence of a default `CMD`. The harness parser accepts
+`cluster up/down/delete/status`, preserves the direct `--model` override, and resolves the
+hostbootstrap-selected model for plain handoff commands.
 
 #### Remaining Work
 
@@ -218,27 +178,25 @@ and a warm-store freeze scoped to container builds. `hostbootstrap` is installed
 ## Documentation Requirements
 
 **Engineering docs to create/update:**
-- `../documents/engineering/hostbootstrap_integration.md` describes the acceleration-keyed
-  target model, capability subsumption, the multi-spec approach, the tini-ENTRYPOINT +
-  `check-code` Dockerfile, and `pipx` install.
+- `../documents/engineering/hostbootstrap_integration.md` describes the substrate-keyed target
+  model, plain cluster handoff, `--force-target`, the tini entrypoint, and the no-auto-restart
+  policy.
 - `../documents/engineering/cluster_topology.md` outer-container shape references the built
   project image, the tini `ENTRYPOINT`, and the container-only warm-store freeze.
 - `../documents/engineering/cabal_layout.md` records the `ghc-9.12.4` pin and the
   container-only freeze import.
 
 **Reference docs to create/update:**
-- `../documents/reference/cli_surface.md` documents the `check-code` build-gate subcommand
-  and the `hostbootstrap … --spec` per-model selection.
+- `../documents/reference/cli_surface.md` documents `cluster delete`, `check-code`, direct
+  inner `--model` debugging, and outer `--force-target` selection.
 
 **Operations docs to create/update:**
-- `../documents/operations/apple_silicon_runbook.md` and
-  `../documents/operations/linux_cpu_runbook.md` describe the single `Cpu` target, the per-model
-  specs, and `pipx` install; no `pip install` lines.
-- `../documents/operations/cluster_bootstrap_runbook.md` describes `--spec` model selection and
-  `cluster delete`.
+- `../documents/operations/apple_silicon_runbook.md`,
+  `../documents/operations/linux_cpu_runbook.md`, and
+  `../documents/operations/cluster_bootstrap_runbook.md` describe the single
+  `hostbootstrap.dhall`, target map, HostDaemon process ordering, `cluster delete`, and no
+  reboot-persistent hostbootstrap lifecycle.
 
 **Cross-references to add:**
-- `../../README.md` and `system-components.md` describe the single `Cpu` target, the three
-  execution models, and the 3×3 model × workflow matrix. `system-components.md` keeps the
-  `hostbootstrap.dhall`, base-image, and project-Dockerfile rows accurate for the
-  acceleration-keyed shape.
+- `../../README.md` and `system-components.md` describe the substrate-keyed target map and the
+  3×3 target/model × workflow matrix.

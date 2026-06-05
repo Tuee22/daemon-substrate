@@ -77,6 +77,14 @@ parseExecutionModel raw =
     "hostdaemon" -> Just ExecutionHostDaemon
     _ -> Nothing
 
+executionModelForHostbootstrapTarget :: Text -> Maybe HarnessExecutionModel
+executionModelForHostbootstrapTarget raw =
+  case Text.strip (Text.toLower raw) of
+    "apple-silicon" -> Just ExecutionHostDaemon
+    "linux-cpu" -> Just ExecutionContainer
+    "linux-gpu" -> Just ExecutionHostBinary
+    _ -> Nothing
+
 executionModelWorkerPlacement :: HarnessExecutionModel -> WorkerPlacement
 executionModelWorkerPlacement model =
   case model of

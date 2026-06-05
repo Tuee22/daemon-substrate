@@ -8,4 +8,3 @@ RUN cabal install --project-file=cabal.project.container --installdir /usr/local
 RUN daemon-substrate-test check-code
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/daemon-substrate-test"]
-CMD ["cluster", "up", "--model", "container", "--stay-resident"]

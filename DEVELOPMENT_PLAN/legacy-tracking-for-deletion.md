@@ -16,16 +16,17 @@ Removal owning phase is Phase 0 Sprint 0.6 (documentation); replacements ship in
 
 - **`bootstrap/apple-silicon.sh`** — planned but never implemented; replaced by the
   `HostDaemon` model entry in `hostbootstrap.dhall`. Owning phase: phase-0, sprint 0.6.
-  Replacement: `hostbootstrap cluster up` driving the LaunchDaemon (see
+  Replacement: `hostbootstrap cluster up` for cluster handoff plus caller-owned foreground
+  `hostbootstrap daemon run` for the HostDaemon process (see
   `../documents/engineering/hostbootstrap_integration.md`).
 - **`bootstrap/linux-cpu.sh`** — planned but never implemented; replaced by the `Container`
   model entry in `hostbootstrap.dhall`. Owning phase: phase-0, sprint 0.6. Replacement:
   `hostbootstrap cluster up` driving the project container.
 - **`compose.yaml`** — planned but never implemented; replaced by the `Container` model
-  declared in `hostbootstrap.dhall` (`service = True`, `.data` + Docker-socket mounts).
-  Owning phase: phase-0, sprint 0.6.
+  declared in `hostbootstrap.dhall` (`.data` + Docker-socket mounts, one-shot container
+  handoff). Owning phase: phase-0, sprint 0.6.
 - **`daemon-substrate-linux-cpu:local` launcher image** — planned but never implemented;
-  replaced by the thin `docker/linux-substrate.Dockerfile` that inherits from the
+  replaced by the thin `docker/Dockerfile` that inherits from the
   `hostbootstrap` base tag. Owning phase: phase-0, sprint 0.6. Replacement landing in
   phase-7, sprint 7.2.
 
@@ -53,28 +54,25 @@ recorded here so the substrate's contract stays honest.
 
 ## Completed
 
-### hostbootstrap acceleration-keyed re-baseline
+### hostbootstrap schema re-baselines
 
-These surfaces were obsoleted by the `hostbootstrap` schema refactor that replaced the
-host-keyed config with an acceleration-keyed one (single `H.Accel.Cpu` target matched by
-capability subsumption). They were removed by Phase 1 Sprint 1.4, Phase 7 Sprint 7.4, and
-Phase 8 Sprint 8.7.
+These surfaces were obsoleted by the hostbootstrap schema changes and are no longer present.
+They were removed by Phase 1 Sprint 1.4, Phase 7 Sprint 7.4, and Phase 8 Sprint 8.7.
 
-- **Host-keyed `hostbootstrap.dhall` entries (`H.entry H.Substrate.AppleSilicon` HostDaemon and
-  `H.entry H.Substrate.LinuxGpu`)** in the root `hostbootstrap.dhall` — replaced by a single
-  `H.target H.Accel.Cpu` target plus the per-model `hostbootstrap-hostbinary.dhall` /
-  `hostbootstrap-hostdaemon.dhall` specs. Owning phase: phase-7, sprint 7.4.
+- **Intermediate acceleration-keyed `hostbootstrap.dhall` plus per-model spec files** —
+  replaced by the current single substrate-keyed `hostbootstrap.dhall` with
+  `AppleSilicon -> HostDaemon`, `LinuxCpu -> Container`, and `LinuxGpu -> HostBinary`.
+  Owning phase: phase-7, sprint 7.4.
 - **`CMD ["/bin/sh", "-c", "daemon-substrate-test cluster up && sleep infinity"]` Dockerfile
-  form** in `docker/linux-substrate.Dockerfile` — replaced by a tini-wrapped `ENTRYPOINT`,
-  the `RUN daemon-substrate-test check-code` build gate, and
-  `CMD ["cluster", "up", "--model", "container", "--stay-resident"]`. Owning phase:
+  form** in `docker/Dockerfile` — replaced by a tini-wrapped `ENTRYPOINT`,
+  the `RUN daemon-substrate-test check-code` build gate, and no default `CMD`. Owning phase:
   phase-7, sprint 7.4.
 - **`with-compiler: ghc-9.12` line in `cabal.project`** — replaced by the exact
   `with-compiler: ghc-9.12.4` pin plus `cabal.project.container` for the container-only
   warm-store freeze import. Owning phase: phase-1, sprint 1.4.
 - **`detectClusterCohort` Apple-vs-Linux cohort branching** in `src/Daemon/Test/CLI/Cluster.hs`
-  — replaced by the execution-model parser and persisted execution-model marker. Owning
-  phase: phase-8, sprint 8.7.
+  — replaced by the execution-model parser, hostbootstrap-selected model resolution, and
+  persisted execution-model marker. Owning phase: phase-8, sprint 8.7.
 - **Residual `pip install … hostbootstrap` doc references** — replaced by the `pipx install`
   form. Owning phase: phase-7, sprint 7.4.
 

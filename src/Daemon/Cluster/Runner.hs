@@ -254,7 +254,7 @@ buildAndLoadHarnessImage _paths cohort actionName imageRef = do
             , "--tag"
             , image
             , "--file"
-            , "docker/linux-substrate.Dockerfile"
+            , "docker/Dockerfile"
             , "."
             ]
             mempty

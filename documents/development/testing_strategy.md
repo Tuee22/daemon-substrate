@@ -17,10 +17,13 @@
 - `daemon-substrate-test test lint` — governed-doc validation plus the direct
   `Daemon.Proto.*` import boundary.
 - `daemon-substrate-test test all` — runs the above in order.
-- One `H.Accel.Cpu` target runs on every host (`apple-silicon`, `linux-cpu`, `linux-gpu`),
-  matched by capability subsumption. The operator entrypoint is `hostbootstrap cluster up`
-  (`hostbootstrap` installed via `pipx`); the `daemon-substrate-test test ...` commands run
-  inside the resulting environment.
+- One substrate-keyed `hostbootstrap.dhall` maps Apple Silicon to `HostDaemon`, Linux CPU to
+  `Container`, and Linux GPU to `HostBinary`. The operator entrypoint is
+  `hostbootstrap cluster up` (`hostbootstrap` installed via `pipx`); HostDaemon workers are
+  foreground `hostbootstrap daemon run` processes owned by the test harness or operator; the
+  `daemon-substrate-test test ...` commands run inside the resulting environment.
+- `--force-target` can exercise all three declared targets on one machine, while full hardware
+  validation still uses three machines.
 - **Coverage model** is the full **3×3 matrix**: each of the three execution models
   (`Container`, `HostBinary`, `HostDaemon`) exercising each of three ML workflow archetypes —
   (a) continuous batched inference (≈ `infernix`), (b) finite SL / offline-RL training jobs
@@ -35,9 +38,9 @@ PVC-backed kind state, live service loops, and the integration readiness gate. A
 live validation covers cluster bring-up, PVC-backed state preservation, native Pulsar
 Failover leadership for the reconciler, live Pulsar/MinIO admin interactions, host-worker
 edge-port handoff, and a live request -> orchestrator -> host worker -> response smoke
-handoff. Phase 8 Sprint 8.7 adds the explicit execution-model marker used by the integration
-gate and the 3×3 matrix audit map. Linux live validation covers hostbootstrap container
-bring-up, two preserved-state kind cycles, retained PV reattachment, worker/orchestrator
+handoff. Phase 8 Sprint 8.7 adds the execution-model marker used by the integration gate and
+the 3×3 matrix audit map. Linux live validation covers hostbootstrap container bring-up,
+two preserved-state kind cycles, retained PV reattachment, worker/orchestrator
 readiness, edge-port preservation, and the `daemon-substrate-integration` live readiness gate.
 Rows 1-36 below
 are the workflow audit map tying automated unit coverage, live readiness checks, and
@@ -102,7 +105,7 @@ architecture.
 | 33 | `Daemon.WorkflowState` rehydration: kill a worker mid-stream; new replica reads back the Pulsar log on `AcquireClients` and reconstructs the in-memory fold to byte-identical state before resuming `Serve` | `runWorker` + `Daemon.WorkflowState.rehydrate` semantics (distinct from row 17's Pulsar-cursor resumption) | yes (training optimizer state, AlphaZero MCTS tree) | yes (durable conversation context across coordinator restarts) |
 | 34 | Producer-side dedup: the same payload published twice under the same idempotency key produces exactly one consumer delivery | `HasPulsar.publish` idempotent-producer wiring (distinct from row 8's consumer-side dedup cache) | yes (training-run submission) | yes (`client_idempotency_key` on `InferenceRequest`) |
 | 35 | Engine forced failure: `MockRequest.force_failure = true` → mock engine returns `EngineNativeError` → worker publishes `WorkerResult { FailurePayload }` → orchestrator routes the failure to the caller without retry | `HasEngine` terminal-failure semantics + `FailurePayload` propagation (distinct from row 9's neg-ack retry path) | yes (Failed / Cancelled status fields) | yes (Completed / Failed / Cancelled status on `InferenceResult`) |
-| 36 | HostDaemon worker ↔ in-cluster Pulsar: a host-native service subscribes via the edge port, publishes to `test.result`, and survives `cluster down` / `cluster up` when the host service remains installed | host-daemon path through `HasPulsar` against the in-cluster broker | yes (jitML `ForwardToHost` Apple inference RPC) | yes (infernix Apple host daemon on `inference.batch.apple-silicon.host`) |
+| 36 | HostDaemon worker ↔ in-cluster Pulsar: a caller-owned foreground `hostbootstrap daemon run` process subscribes via the edge port, publishes to `test.result`, is terminated before `cluster down`, and is started after `cluster up` | host-daemon path through `HasPulsar` against the in-cluster broker | yes (jitML `ForwardToHost` Apple inference RPC) | yes (infernix Apple host daemon on `inference.batch.apple-silicon.host`) |
 
 ## Consumer surface mapping
 
@@ -218,20 +221,21 @@ first failure.
 ## Host and model obligations
 
 Per [`../../DEVELOPMENT_PLAN/development_plan_standards.md` § Q](../../DEVELOPMENT_PLAN/development_plan_standards.md),
-the harness must validate on the hosts the single `H.Accel.Cpu` target runs on (Apple Silicon
-and Linux). The current harness records the 3×3 model × workflow matrix in
-`Daemon.Test.Matrix`; the integration gate keys node-count and worker-placement expectations
-from the selected execution model rather than from host detection.
+the harness must validate the three declared hostbootstrap targets: Apple Silicon
+`HostDaemon`, Linux CPU `Container`, and Linux GPU `HostBinary`. The current harness records
+the 3×3 model × workflow matrix in `Daemon.Test.Matrix`; the integration gate keys node-count
+and worker-placement expectations from the selected execution model rather than from raw host
+detection.
 
 The operator entrypoint is `hostbootstrap cluster up`; the `daemon-substrate-test test ...`
-commands run inside the resulting environment (`hostbootstrap run ...`
-under the `Container` model; `./.build/daemon-substrate-test ...` under the `HostBinary` /
-`HostDaemon` models). See
+commands run inside the resulting environment (`hostbootstrap run ...` for the selected
+target, or `./.build/daemon-substrate-test ...` after host-native builds). For HostDaemon
+targets, the harness must also own a foreground `hostbootstrap daemon run` process. Use
+`--force-target` to complete the target matrix on one machine. See
 [../engineering/hostbootstrap_integration.md](../engineering/hostbootstrap_integration.md).
 
-There is no GPU cohort. The mock engine performs no accelerator work, so the `Cuda` and
-`Metal` capabilities are unused even on hosts that satisfy them; adding a GPU cohort would cost
-without coverage.
+The mock engine performs no accelerator work. The Linux GPU target validates the hostbootstrap
+target/model lifecycle and CUDA-flavored base-image path, not CUDA computation.
 
 ## What this strategy does not cover
 

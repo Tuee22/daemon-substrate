@@ -6,201 +6,160 @@
 
 > **Purpose**: Operator-facing reference for cluster lifecycle — the outer
 > `hostbootstrap cluster ...` entry, the inner `daemon-substrate-test cluster ...`
-> reconcilers, and the lifecycle phases the operator should expect to see during each.
+> reconcilers, and the lifecycle phases the operator should expect to see.
 
 ## TL;DR
 
-- `hostbootstrap cluster up` is the outer entry. It builds the project artifact and launches
-  the model declared in the active spec (`--spec`; `hostbootstrap.dhall` = `Container` default,
-  `hostbootstrap-hostbinary.dhall` = `HostBinary`, `hostbootstrap-hostdaemon.dhall` =
-  `HostDaemon`). The single `H.Accel.Cpu` target runs on every host.
-- `daemon-substrate-test cluster up` is the inner reconciler that reconciles the kind cluster
-  + Harbor / Pulsar / MinIO / orchestrator topology. It runs inside the project container under
-  the `Container` model and on the host under the `HostBinary` / `HostDaemon` models.
-- Both commands are idempotent. Safe to re-run.
-- `cluster down` (outer or inner) preserves `./.data/` and `./.build/` so the next `up` is
-  fast; `hostbootstrap cluster delete` does a thorough teardown but still preserves `./.data/`.
-- `hostbootstrap` is installed via `pipx` only (`pipx install
-  "git+https://github.com/tuee22/hostbootstrap.git#egg=hostbootstrap"`).
-- Long-running phases (Docker image build, dependency rollout) are expected to refresh a
-  heartbeat in the target lifecycle reporter. Until that lands, streamed action progress,
-  subprocess output, and action completion are the current progress indicators.
+- `hostbootstrap cluster up` is the outer entry. It detects the host, selects the matching
+  substrate entry in `hostbootstrap.dhall`, builds the project artifact, and forwards
+  `daemon-substrate-test cluster up`.
+- The declared target map is Apple Silicon `HostDaemon`, Linux CPU `Container`, Linux GPU
+  `HostBinary`.
+- `hostbootstrap cluster down` forwards `cluster down`; `hostbootstrap cluster delete`
+  forwards `cluster delete`.
+- For `HostDaemon`, run `hostbootstrap daemon run` as a separate foreground process after
+  `cluster up`, and terminate it before `cluster down` / `cluster delete`.
+- `hostbootstrap` does not install launchd/systemd units and does not create Docker containers
+  that restart after reboot. Run `hostbootstrap cluster up` after each reboot.
+- `--force-target <apple-silicon|linux-cpu|linux-gpu>` lets one physical host exercise any
+  declared target for validation.
+- `./.data/` is preserved by outer lifecycle commands.
 
-## Ownership boundary
+## Ownership Boundary
 
-- **Outer (hostbootstrap)**: substrate detection, host prereqs, base image / project image
-  build, container or LaunchDaemon lifecycle, `.data` preservation.
-- **Inner (daemon-substrate-test)**: kind create, Helm install of Harbor / Pulsar / MinIO,
-  ConfigMap render, Deployment apply, MinIO bucket seeding, edge-port discovery, lifecycle
-  phase transitions.
+- **Outer (`hostbootstrap`)**: substrate detection, host prereq checks, base image selection,
+  project image or native-binary build, one-shot container run, host-binary invocation,
+  foreground `HostDaemon` invocation through `hostbootstrap daemon run`, and
+  `cluster up/down/delete` forwarding.
+- **Inner (`daemon-substrate-test`)**: kind create, Helm install of Harbor / Pulsar / MinIO,
+  ConfigMap render, Deployment apply, MinIO bucket seeding, edge-port discovery, lifecycle phase
+  transitions, and readiness checks.
 
 See [../engineering/hostbootstrap_integration.md](../engineering/hostbootstrap_integration.md)
 for the full boundary statement.
 
-Current implementation note: Phase 6 landed the `Daemon.Cluster.*` action-plan modules,
-the Helm chart render surface, and the packaged harness Dhall configs. Phase 8 Sprint 8.6
-implemented concrete `kind`, `kubectl`, `helm`, Docker image build, kind image-load, Kubernetes
-apply / rollout wait, Pulsar admin, MinIO admin, and edge-port execution. The dependency
-charts are deployable local Harbor / Pulsar / MinIO StatefulSets with PVC-backed state, and
-the service command runs live worker / orchestrator loops. Apple edge-port forwarding,
-host-worker handoff, and a live request -> orchestrator -> host worker -> response smoke
-handoff are validated. Linux hostbootstrap container bring-up, two consecutive
-preserved-state kind `cluster down` / `cluster up` cycles, retained PV reattachment, worker
-and orchestrator rollouts, edge-port preservation, and the `daemon-substrate-integration`
-live readiness gate are validated.
+## Target Matrix
+
+| Target | Normal host | Model | Worker placement |
+|--------|-------------|-------|------------------|
+| `apple-silicon` | macOS arm64 | `HostDaemon` | host-native worker process |
+| `linux-cpu` | Ubuntu/Linux without NVIDIA runtime | `Container` | in-cluster worker Deployment |
+| `linux-gpu` | Ubuntu/Linux with NVIDIA runtime | `HostBinary` | in-cluster worker Deployment |
+
+Use `--force-target` on `build`, `run`, and `cluster ...` commands when validating another
+target on the current host.
 
 ## Bring-up
 
-`Container` model (default; outer container; in-cluster reconcilers inside the container):
+Normal detected-host bring-up:
 
 ```bash
-hostbootstrap cluster up                           # outer: build container, run service
-# inner runs automatically inside the container
-hostbootstrap run cluster up --model container     # invoke inner directly if needed
+hostbootstrap doctor
+hostbootstrap cluster up
 ```
 
-`HostDaemon` model (host-native worker via launchd/systemd; in-cluster reconcilers on host):
+On the AppleSilicon `HostDaemon` target, start the host worker in a second terminal, service
+manager, or test-harness process after the cluster is up:
 
 ```bash
-hostbootstrap cluster up --spec hostbootstrap-hostdaemon.dhall  # outer: build binary, install managed service
-./.build/daemon-substrate-test cluster up --model host-daemon   # inner: reconcile kind cluster
+hostbootstrap daemon run
 ```
 
-`cluster up` reconciles, in order:
+Forced target bring-up:
 
-1. **Kind cluster**: create if missing; treat an already-existing cluster as a successful
-   no-change action; verify the cohort-specific node count is ready
-   (Apple Silicon: one worker; Linux CPU: three workers). On Linux, the outer service
-   container is attached to Docker's `kind` network and the kubeconfig is exported with
-   kind's internal API endpoint before resources are applied.
-2. **Manual storage**: install the `daemon-substrate-manual` StorageClass; provision durable
-   PVs into the kind node mount rooted at
-   `/daemon-substrate-data/<cohort>/daemon-substrate`, backed by host files under
-   `./.data/kind/<cohort>/daemon-substrate/...`
+```bash
+hostbootstrap cluster up --force-target apple-silicon
+hostbootstrap cluster up --force-target linux-cpu
+hostbootstrap cluster up --force-target linux-gpu
+```
+
+The inner `cluster up` reconciles, in order:
+
+1. **Kind cluster**: create if missing; treat an existing cluster as a successful no-change
+   action; verify the model-specific node topology.
+2. **Manual storage**: install the `daemon-substrate-manual` StorageClass and provision durable
+   PVs backed by `./.data/kind/...`.
 3. **Image build**: build `daemon-substrate-test:local` from the thin project Dockerfile and
-   load it directly into the kind cluster
-4. **Helm dependencies**: build/refresh Harbor, Pulsar, MinIO chart dependencies and upgrade
-   the harness release
-5. **Dependency readiness**: wait for Harbor, Pulsar, and MinIO StatefulSets to become ready
-6. **Pulsar bootstrap**: run `pulsar-admin` inside the broker pod to create the
-   test-harness tenant, namespace, and required topics idempotently
-7. **MinIO bootstrap**: run `mc` inside the MinIO sidecar to create the three harness buckets
-   (`weights`, `artifacts`, `archives`) and seed the mock weight
-   blobs
-8. **ConfigMaps**: render `configmap-orchestrator` and `configmap-worker` from the packaged
-   chart Dhall files
-9. **Orchestrator Deployment**: roll out; wait for readiness
-10. **Worker Deployment** (Linux CPU cohort only): roll out two replicas with anti-affinity
-11. **Edge port discovery / forwarding**: pick a base port (9090 first; increment on
-    conflict); persist `pulsarPort`, `pulsarAdminPort`, and `minioPort` to `edge-port.json`;
-    on Apple Silicon, start matching local port-forwards and record their pids
+   load it directly into kind.
+4. **Helm dependencies**: build or refresh Harbor, Pulsar, and MinIO chart dependencies.
+5. **Dependency readiness**: wait for Harbor, Pulsar, and MinIO StatefulSets to become ready.
+6. **Pulsar bootstrap**: create the harness tenant, namespace, and topics idempotently.
+7. **MinIO bootstrap**: create the harness buckets and seed mock blobs.
+8. **ConfigMaps**: render orchestrator and worker Dhall ConfigMaps.
+9. **Orchestrator Deployment**: roll out and wait for readiness.
+10. **Worker**: roll out the in-cluster worker Deployment for `Container` / `HostBinary`, or use
+    the caller-owned foreground `hostbootstrap daemon run` process for `HostDaemon`.
+11. **Edge port discovery / forwarding**: pick and persist Pulsar, Pulsar admin, and MinIO edge
+    ports; host-native paths use those records to reach in-cluster services.
 
-Each phase emits an action result. During `cluster up`, the current runner prints each action
-as it starts and records no-change results such as `kind cluster already exists`. The current
-`cluster status` implementation reports kind clusters and node readiness; richer lifecycle
-heartbeat reporting remains target telemetry.
+## Ready Definition
 
-## "Ready" definition
+The cluster is `Ready` when these conditions hold:
 
-The cluster is `Ready` when **all six** conditions hold:
-
-1. Kind node count matches the cohort topology (Apple Silicon: control plane + one worker;
-   Linux CPU: control plane + three workers).
-2. The Pulsar admin API is reachable on the chosen edge port.
+1. Kind node count matches the selected model topology.
+2. Pulsar admin is reachable on the chosen edge port.
 3. Every MinIO bucket named in `LifecyclePolicy` exists.
-4. The orchestrator Deployment is `2/2` Ready (both replicas healthy).
-5. The worker is `2/2` Ready on Linux CPU, or the host LaunchDaemon reports `Ready` on
-   Apple Silicon.
-6. `runReconciler` has completed at least one full tick (audit-topic entry observed for the
-   current `LifecyclePolicy` generation).
+4. The orchestrator Deployment is `2/2` Ready.
+5. The worker is Ready: in-cluster replicas for `Container` / `HostBinary`, host-native process
+   for `HostDaemon`.
+6. `runReconciler` has completed at least one full tick.
 
-The target lifecycle status report will surface any failing condition under
-`lifecycleDetail`. This is the same definition used by the target
-`daemon-substrate-test test integration` preflight (see
-[../reference/cli_surface.md § test integration](../reference/cli_surface.md) and
-[../development/testing_strategy.md](../development/testing_strategy.md)).
-
-Current implementation note: `cluster up` and `daemon-substrate-integration` enforce the
-live readiness portions available today: node topology, dependency rollouts, daemon workload
-readiness, retained PVC binding, and edge-port persistence. `cluster status` remains a
-read-only kind / node status command; lifecycle-detail reporting is still target telemetry.
+`daemon-substrate-test test integration` uses this same readiness contract. See
+[../reference/cli_surface.md](../reference/cli_surface.md) and
+[../development/testing_strategy.md](../development/testing_strategy.md).
 
 ## Status
 
+Use the outer `run` path for the selected target:
+
 ```bash
-./.build/daemon-substrate-test cluster status --model host-daemon # host-daemon
-hostbootstrap run cluster status --model container                 # container
+hostbootstrap run cluster status
+hostbootstrap run --force-target linux-gpu cluster status
 ```
 
-Reports the known kind clusters and node readiness through the repo-local kubeconfig. The
-target status report also includes:
+For direct inner debugging, the harness still accepts `--model`:
 
-- current `lifecyclePhase` (one of `Load`, `Prereq`, `Acquire`, `Ready`, `Serve`, `Drain`,
-  `Exit`; the seven-phase `Daemon.Lifecycle.LifecyclePhase` defined in
-  [../../DEVELOPMENT_PLAN/phase-3-bootconfig-liveconfig-lifecycle.md](../../DEVELOPMENT_PLAN/phase-3-bootconfig-liveconfig-lifecycle.md)
-  Sprint 3.4 and serialized to the wire by `proto/daemon_substrate/lifecycle.proto`)
-- `lifecycleDetail`: free-form descriptor of what the current phase is doing
-- `lifecycleHeartbeatAt`: monotonic timestamp of the most recent heartbeat update
-- Harbor / Pulsar / MinIO pod readiness summary
-- orchestrator and worker Deployment readiness
+```bash
+./.build/daemon-substrate-test cluster status --model host-daemon
+./.build/daemon-substrate-test cluster status --model host-binary
+hostbootstrap run cluster status --model container
+```
 
 `cluster status` does not mutate Kubernetes state, repo-local state, or the chosen edge port.
-
-## Heartbeat-driven progress interpretation
-
-Some phases run for minutes (Docker image build on first invocation, dependency rollout,
-MinIO seeding). The operator should not interpret long durations as failure. The target
-lifecycle reporter refreshes its heartbeat every ~30 seconds while a phase is making
-progress; until that reporter lands, subprocess output and action completion are the current
-progress indicators.
-
-Typical bring-up durations:
-
-| Phase | First run | Subsequent runs |
-|-------|-----------|-----------------|
-| Harness image build | 5–10 min | < 30 s (cached layers) |
-| Kind cluster create | 1–2 min | 0 (already exists) |
-| Dependency rollout | 2–4 min | < 30 s |
-| Pulsar bootstrap | 1–2 min | < 30 s |
-| MinIO bootstrap + seed | < 30 s | < 10 s |
-| Workload deployment | < 30 s | < 10 s |
 
 ## Teardown
 
 ```bash
-hostbootstrap cluster down                           # both cohorts (outer)
-./.build/daemon-substrate-test cluster down --model host-daemon # host-daemon, inner only
-hostbootstrap run cluster down --model container                 # container, inner only
+hostbootstrap cluster down
+hostbootstrap cluster delete
 ```
 
-Tears down the Kind cluster and all in-cluster resources. Preserves:
+`cluster down` reconciles cluster absence while preserving repo-local durable state. `cluster
+delete` is the thorough inner teardown path and still preserves `./.data/`.
 
-- `./.data/` — durable cluster state (PV-backing files); `hostbootstrap` never deletes this
-- `./.build/` — compiled binary (Apple), staged Dhall, kubeconfig, edge-port record
-- the project container image (Linux only; rebuilt only by `hostbootstrap cluster up
-  --build-base` or `cluster delete` then `up`)
+Preserved state:
+
+- `./.data/` — durable cluster state and PV-backing files
 - installed host prerequisites
+- local Docker layer cache
 
-A subsequent `cluster up` reuses the preserved state and is significantly faster than the
-first bring-up. `hostbootstrap cluster delete` performs a thorough teardown (cluster +
-derived state) but still preserves `./.data/`.
+For `HostDaemon`, stop the foreground `hostbootstrap daemon run` process before running
+`cluster down` or `cluster delete`. hostbootstrap does not track a PID file or stop that process
+for you.
 
-## Edge port
+## Reboot Policy
 
-`daemon-substrate-test cluster up` tries to bind port 9090 first; on conflict it increments
-linearly until an open base port is found. The chosen ports are:
+No `hostbootstrap` lifecycle artifact is intended to survive reboot as an automatically
+restarted service. Docker invocations are one-shot and host daemon processes are caller-owned
+foreground processes. After reboot:
 
-- persisted under `./.build/edge-port.json` (Apple) or `./.data/runtime/edge-port.json` (Linux)
-- printed to the operator during bring-up
-- read by the host-native Apple worker at startup to find the in-cluster Pulsar / MinIO
-  endpoints
+```bash
+hostbootstrap cluster up
+hostbootstrap daemon run  # HostDaemon target only
+```
 
-The record maps `pulsarPort` to Pulsar broker `6650`, `pulsarAdminPort` to Pulsar admin
-`8080`, and `minioPort` to MinIO `9000`. On Apple Silicon, `cluster up` starts detached
-`kubectl port-forward` processes for those mappings and writes their pids to
-`edge-port.json.pids`; `cluster down` terminates those recorded pids before deleting the
-kind cluster. `cluster down` does not delete the edge-port record, so a subsequent `up` keeps
-the same base port if it is still available.
+Operators who want boot-time automation can create their own launchd/systemd unit outside
+`hostbootstrap`; that unit should supervise `hostbootstrap daemon run` directly.
 
 ## Kubeconfig
 
@@ -211,16 +170,16 @@ The repo-local kubeconfig is the only authoritative handle to the harness cluste
 | `host-binary` / `host-daemon` | `./.build/daemon-substrate.kubeconfig` |
 | `container` | `./.data/runtime/daemon-substrate.kubeconfig` |
 
-Neither path mutates the operator's `~/.kube/config`. To use `kubectl` directly:
+Neither path mutates the operator's global kubeconfig. To use `kubectl` directly:
 
 ```bash
-KUBECONFIG=./.build/daemon-substrate.kubeconfig kubectl get pods -A   # Apple
-docker exec daemon-substrate kubectl --kubeconfig /workspace/.data/runtime/daemon-substrate.kubeconfig get pods -A   # container
+kubectl --kubeconfig ./.build/daemon-substrate.kubeconfig get pods -A
+hostbootstrap run kubectl --kubeconfig /workspace/.data/runtime/daemon-substrate.kubeconfig get pods -A
 ```
 
 ## Cross-references
 
-- What gets deployed: [../engineering/cluster_topology.md](../engineering/cluster_topology.md)
-- Apple-specific operator workflow: [apple_silicon_runbook.md](apple_silicon_runbook.md)
-- Linux-specific operator workflow: [linux_cpu_runbook.md](linux_cpu_runbook.md)
+- Apple runbook: [apple_silicon_runbook.md](apple_silicon_runbook.md)
+- Linux CPU runbook: [linux_cpu_runbook.md](linux_cpu_runbook.md)
+- hostbootstrap integration: [../engineering/hostbootstrap_integration.md](../engineering/hostbootstrap_integration.md)
 - Testing strategy: [../development/testing_strategy.md](../development/testing_strategy.md)

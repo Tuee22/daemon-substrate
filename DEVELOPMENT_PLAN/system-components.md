@@ -237,41 +237,38 @@ this repository ships only the project-side config and the thin project Dockerfi
 [`../documents/engineering/hostbootstrap_integration.md`](../documents/engineering/hostbootstrap_integration.md)
 for the integration shape.
 
-The bootstrap shape declares a single `H.Accel.Cpu` target that runs on every host (matched by
-capability subsumption); the execution model is selected by `--spec`:
+The bootstrap shape declares one substrate entry per hostbootstrap target in the single root
+`hostbootstrap.dhall`; `--force-target` can select a non-detected entry for validation:
 
-| Entrypoint | Spec (`--spec`) | Model | Delegates to |
-|------------|------------------|-------|--------------|
-| `hostbootstrap cluster up` | `hostbootstrap.dhall` (default) | `Container` | project container running `daemon-substrate-test cluster up --model container --stay-resident` |
-| `hostbootstrap cluster up --spec hostbootstrap-hostbinary.dhall` | `hostbootstrap-hostbinary.dhall` | `HostBinary` | native `./.build/daemon-substrate-test cluster up --model host-binary` handoff |
-| `hostbootstrap cluster up --spec hostbootstrap-hostdaemon.dhall` | `hostbootstrap-hostdaemon.dhall` | `HostDaemon` | managed service (launchd on Apple, systemd on Linux) running `./.build/daemon-substrate-test service --role worker` |
+| Entrypoint | Target | Model | Delegates to |
+|------------|--------|-------|--------------|
+| `hostbootstrap cluster up` on Apple Silicon | `AppleSilicon` | `HostDaemon` | `.build/daemon-substrate-test cluster up`; host worker runs separately via foreground `hostbootstrap daemon run` |
+| `hostbootstrap cluster up` on Linux CPU | `LinuxCpu` | `Container` | one-shot project container receiving `cluster up` |
+| `hostbootstrap cluster up` on Linux GPU | `LinuxGpu` | `HostBinary` | native `.build/daemon-substrate-test cluster up` |
+| `hostbootstrap cluster up --force-target <target>` | forced target | target model | same as the selected target |
 
 ## Project-side bootstrap files
 
 | File | Purpose |
 |------|---------|
-| `hostbootstrap.dhall` | typed config consumed by `hostbootstrap`; declares a single `H.Accel.Cpu` target wrapped in the `Container` model plus mounts (the default spec) |
-| `hostbootstrap-hostbinary.dhall` | same single `H.Accel.Cpu` target wrapped in the `HostBinary` model |
-| `hostbootstrap-hostdaemon.dhall` | same single `H.Accel.Cpu` target wrapped in the `HostDaemon` model (launchd on Apple, systemd on Linux) |
-| `docker/linux-substrate.Dockerfile` | thin project Dockerfile (`FROM ${BASE_IMAGE}` plus the project's own build steps, a tini-wrapped `ENTRYPOINT`, and a `RUN daemon-substrate-test check-code` build gate); the heavy toolchain is in the base |
+| `hostbootstrap.dhall` | typed config consumed by `hostbootstrap`; maps `AppleSilicon` to `HostDaemon`, `LinuxCpu` to `Container`, and `LinuxGpu` to `HostBinary` |
+| `docker/Dockerfile` | thin project Dockerfile (`FROM ${BASE_IMAGE}` plus the project's own build steps, a tini-wrapped `ENTRYPOINT`, and a `RUN daemon-substrate-test check-code` build gate); no default `CMD`; the heavy toolchain is in the base |
 | `cabal.project.container` | container-only Cabal project file importing `/opt/basecontainer/haskell-deps/cabal.project.freeze` |
 
-The original host-keyed `hostbootstrap.dhall` and shell-form service `CMD` were validated in
-Phase 7 Sprint 7.3 and then replaced in Phase 7 Sprint 7.4 by the single `H.Accel.Cpu` target,
-per-model specs, tini-wrapped `ENTRYPOINT`, and `check-code` Dockerfile gate. Phase 8 Sprint
-8.7 added the model-keyed harness surface (`cluster --model`, persisted execution-model
-records, and `Daemon.Test.Matrix`). The obsolete host-keyed entries and sleep-form command are
-closed in the cleanup ledger.
+The intermediate per-model spec files and resident container `CMD` are removed. Phase 8 keeps
+the direct `cluster --model` debugging override, persisted execution-model records, and
+`Daemon.Test.Matrix`; normal hostbootstrap handoff forwards plain `cluster up/down/delete`.
 
 ## Base image
 
-`hostbootstrap` publishes a full set of base images; the substrate consumes only the CPU
-base below (the Apple cohort uses the `HostDaemon` model and builds host-native, so it pulls
-no base image).
+`hostbootstrap` publishes CPU and CUDA base images. Apple Silicon and Linux CPU consume the CPU
+base for container artifacts; Linux GPU consumes the CUDA base for the HostBinary build
+container and optional project image.
 
 | Tag | Used by | Provides |
 |-----|---------|----------|
-| `docker.io/tuee22/hostbootstrap:basecontainer-cpu-amd64` / `-arm64` | CPU target | `ghc-9.12.4`, Cabal, kube tools (`kubectl`, `helm`, `kind`), `protoc`, `ormolu`, `hlint`, warm Haskell store |
+| `docker.io/tuee22/hostbootstrap:basecontainer-cpu-amd64` / `-arm64` | `AppleSilicon`, `LinuxCpu` container artifacts | `ghc-9.12.4`, Cabal, kube tools (`kubectl`, `helm`, `kind`), `protoc`, `ormolu`, `hlint`, warm Haskell store |
+| `docker.io/tuee22/hostbootstrap:basecontainer-cuda-amd64` / `-arm64` | `LinuxGpu` HostBinary build container and optional project image | CPU toolchain plus CUDA-flavored base selection |
 
 The Pulsar client is in-process pure Haskell (`Daemon.Pulsar.Native` over the native binary
 protocol; `Daemon.Pulsar.Admin.Http` over admin REST), so the base image needs **no** Node

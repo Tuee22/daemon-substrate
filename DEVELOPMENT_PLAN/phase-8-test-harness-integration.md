@@ -12,13 +12,12 @@
 
 **Status**: Done
 
-Sprints 8.1 through 8.6 closed against the original host-keyed bootstrap:
+Sprints 8.1 through 8.6 closed the executable, live cluster, and service-loop surfaces:
 `daemon-substrate-test test ...` delegates to Cabal, `cluster ...` executes concrete kind /
 kubectl / helm / Docker image build and kind image-load actions, the local Harbor / Pulsar /
 MinIO dependency charts are deployable, Pulsar and MinIO admin actions run through the live
-pods, the chart mounts PVC-backed state into the dependency pods, the Linux project
-Dockerfile starts `cluster up` by default and keeps the service container resident after a
-successful run, and the harness `service` command runs the live worker / orchestrator loops.
+pods, the chart mounts PVC-backed state into the dependency pods, and the harness `service`
+command runs the live worker / orchestrator loops.
 Apple Silicon preserved-state kind bring-up, in-place `cluster up` idempotency, managed
 edge-port forwarding, host-worker handoff, and a live request -> orchestrator -> host worker
 -> response workflow handoff are validated. Linux hostbootstrap container bring-up,
@@ -26,11 +25,12 @@ two-cycle preserved-state kind bring-up, Ready workload state, and the
 `daemon-substrate-integration` live readiness gate are validated. That work remains valid and
 is not being rewritten.
 
-Sprint 8.7 is closed against the acceleration-keyed bootstrap shape: `daemon-substrate-test`
-now exposes `check-code`, cluster commands accept an explicit execution model supplied by the
-hostbootstrap spec, `detectClusterCohort` OS branching is removed, the integration readiness
-gate keys node and worker expectations from the persisted execution-model marker, and
-`Daemon.Test.Matrix` records the 3×3 execution-model × workflow-archetype coverage map.
+Sprint 8.7 is closed against the substrate-keyed bootstrap shape: `daemon-substrate-test`
+exposes `check-code`, cluster commands accept a direct `--model` debugging override, plain
+hostbootstrap handoff resolves the selected target/model, `cluster delete` is implemented,
+`detectClusterCohort` OS branching is removed, the integration readiness gate keys node and
+worker expectations from the persisted execution-model marker, and `Daemon.Test.Matrix`
+records the 3×3 execution-model × workflow-archetype coverage map.
 
 **Remaining work**: none.
 
@@ -61,8 +61,8 @@ manual live-smoke evidence to consumer-representative behaviors.
 #### Objective
 
 Land `app/test/Main.hs` implementing the command surface described in
-[`../documents/reference/cli_surface.md`](../documents/reference/cli_surface.md):
-`cluster {up,down,status}`, `test {unit,lifecycle,integration,lint,all}`, `service --role <r>
+[../documents/reference/cli_surface.md](../documents/reference/cli_surface.md):
+`cluster {up,down,delete,status}`, `test {unit,lifecycle,integration,lint,all}`, `service --role <r>
 --config <path>`.
 
 #### Deliverables
@@ -193,8 +193,9 @@ coverage:
   representative of `infernix.InferenceRequest.client_idempotency_key`)
 - engine forced failure: `MockRequest.force_failure = true` → `FailurePayload` propagates to
   caller without retry (row 35; representative of `InferenceResult.status = Failed`)
-- Apple-Silicon host-daemon ↔ in-cluster Pulsar handshake survives `cluster down` / `up`
-  (row 36; representative of jitML `ForwardToHost` and infernix Apple host daemon)
+- Apple-Silicon host-daemon ↔ in-cluster Pulsar handshake survives a caller-owned foreground
+  daemon process across `cluster down` / `up` cycles (row 36; representative of jitML
+  `ForwardToHost` and infernix Apple host daemon)
 
 ### Sprint 8.5: `daemon-substrate-haskell-style` stanza (lint + doc validator) [Done]
 
@@ -242,7 +243,7 @@ delegate now executes Cabal for every test command.
 **Status**: Done
 **Implementation**: `src/Daemon/Cluster/Runner.hs`, `src/Daemon/Test/CLI/Cluster.hs`,
 `src/Daemon/Test/CLI/Tests.hs`, `src/Daemon/Test/CLI/Service.hs`,
-`docker/linux-substrate.Dockerfile`
+`docker/Dockerfile`
 **Docs to update**: `../documents/reference/cli_surface.md`,
 `../documents/engineering/cluster_topology.md`,
 `../documents/engineering/hostbootstrap_integration.md`,
@@ -258,14 +259,14 @@ cluster, and `service` runs the actual daemon role loop until terminated.
 
 - `daemon-substrate-test test {unit,lifecycle,integration,lint,all}` delegates to Cabal and
   propagates failures through the executable exit code.
-- `daemon-substrate-test cluster {up,down,status}` runs the concrete action plan against
+- `daemon-substrate-test cluster {up,down,delete,status}` runs the concrete action plan against
   absolute tool paths, builds `daemon-substrate-test:local`, loads it into kind, applies the
   manual StorageClass / PVs, installs the Helm chart, runs Pulsar admin through the broker
   pod, runs MinIO admin through the `mc` sidecar, treats an already-existing kind cluster as
   an idempotent no-op, streams long-running build/load progress, and persists the selected
   edge port.
-- Linux CPU project image defaults to `daemon-substrate-test cluster up` when started as a
-  `hostbootstrap` service container and remains resident after successful reconciliation.
+- Linux CPU project image exposes `daemon-substrate-test` as the tini-wrapped entrypoint;
+  `hostbootstrap` forwards `cluster up/down/delete` as one-shot container commands.
 - Apple Silicon `service --role worker` is implemented as a long-running live worker loop.
   The host worker reads the persisted edge-port record, rewrites Pulsar / Pulsar admin /
   MinIO endpoints to localhost, connects through the managed port-forwards, and has been
@@ -297,11 +298,11 @@ Validated locally with:
 - built `daemon-substrate-test --help`
 - built `daemon-substrate-test test unit`
 - built `daemon-substrate-test cluster down`
-- `hostbootstrap doctor --spec hostbootstrap.dhall`
-- `hostbootstrap build --spec hostbootstrap.dhall`
-- `hostbootstrap cluster up --spec hostbootstrap.dhall`
-- `launchctl print system/com.hostbootstrap.daemon-substrate`
-- `hostbootstrap cluster down --spec hostbootstrap.dhall`
+- `hostbootstrap doctor`
+- `hostbootstrap build --force-target apple-silicon`
+- `hostbootstrap cluster up --force-target apple-silicon`
+- `hostbootstrap daemon run --force-target apple-silicon` as the foreground host worker
+- `hostbootstrap cluster down --force-target apple-silicon`
 - `helm template daemon-substrate-test ./chart -f chart/values/apple-silicon.yaml`
 - `helm template daemon-substrate-test ./chart -f chart/values/linux-cpu.yaml`
 - Apple Silicon live `daemon-substrate-test cluster up`, `cluster down && cluster up`
@@ -315,18 +316,15 @@ Validated locally with:
   (`live-smoke-1780601659`) returning `WorkerSuccess` on `test.response` with payload
   `live-smoke-payload`.
 - Linux live validation with:
-  - `hostbootstrap doctor --spec hostbootstrap.dhall` on Ubuntu 24.04 amd64, detected as
-    `linux-gpu` and mapped by this repo to the CPU-flavored harness container
-  - `hostbootstrap build --spec hostbootstrap.dhall`
-  - `hostbootstrap cluster up --spec hostbootstrap.dhall`
-  - two consecutive `docker exec daemon-substrate daemon-substrate-test cluster down` /
-    `cluster up` preserved-state cycles
+  - `hostbootstrap doctor` on Ubuntu 24.04 amd64
+  - `hostbootstrap build --force-target linux-cpu`
+  - `hostbootstrap cluster up --force-target linux-cpu`
+  - two consecutive `hostbootstrap cluster down --force-target linux-cpu` /
+    `hostbootstrap cluster up --force-target linux-cpu` preserved-state cycles
   - `kubectl get pods -A` showing Harbor, Pulsar, MinIO, two orchestrator pods, and two
     worker pods Running with zero restarts
   - `kubectl get pvc,pv` showing Harbor, Pulsar, and MinIO PVCs bound to retained PVs
-  - `/workspace/.data/runtime/edge-port.json` preserving `9090`, `9091`, and `9092`
-  - `docker inspect daemon-substrate` showing the service container still running with
-    restart count `0`
+  - `./.data/runtime/edge-port.json` preserving `9090`, `9091`, and `9092`
   - `daemon-substrate-test test all`
   - `cabal test daemon-substrate-integration --builddir=/tmp/daemon-substrate-cabal` from
     the project image on Docker's `kind` network, validating the live readiness gate against
@@ -336,8 +334,7 @@ Validated locally with:
 
 **Status**: Done
 **Implementation**: `src/Daemon/Test/CLI/*`, `src/Daemon/Test/Matrix.hs`,
-`src/Daemon/Cluster/*`, `test/integration/*`, `hostbootstrap-hostbinary.dhall`,
-`hostbootstrap-hostdaemon.dhall`
+`src/Daemon/Cluster/*`, `test/integration/*`, `hostbootstrap.dhall`
 **Docs to update**: `../documents/development/testing_strategy.md`,
 `../documents/reference/cli_surface.md`, `../documents/engineering/hostbootstrap_integration.md`,
 `../documents/architecture/daemon_roles.md`,
@@ -352,8 +349,8 @@ three ML workflow archetypes — (a) continuous batched inference (≈ `infernix
 SL / offline-RL training jobs (≈ `jitML`), and (c) continuous online RL (MinIO weight updates
 announced on Pulsar inference topics; distinct training-vs-inference task messages routable to
 same-or-separate stateless engines). Land the `check-code` subcommand and refactor the test
-suite onto the per-model spec files. `daemon-substrate` is the reference scaffolding for
-`infernix` and `jitML`.
+suite onto the single substrate-keyed hostbootstrap config. `daemon-substrate` is the reference
+scaffolding for `infernix` and `jitML`.
 
 #### Deliverables
 
@@ -362,9 +359,10 @@ suite onto the per-model spec files. `daemon-substrate` is the reference scaffol
   build gate.
 - `Daemon.Test.Matrix` defines the three execution models, three workflow archetypes, the
   nine matrix cases, and the audit-row mapping for each archetype.
-- `daemon-substrate-test cluster up` accepts `--model
-  <container|host-binary|host-daemon>` and persists the selected execution model beside the
-  edge-port record; the Dockerfile and HostBinary spec pass the model explicitly.
+- `daemon-substrate-test cluster up/down/delete/status` accepts `--model
+  <container|host-binary|host-daemon>` for direct debugging and persists the selected execution
+  model beside the edge-port record; plain hostbootstrap handoff resolves the model from the
+  selected target.
 - `daemon-substrate-integration` keys readiness expectations from the persisted execution
   model rather than a host-keyed cohort split; `detectClusterCohort` Apple-vs-Linux branching
   is removed.
@@ -391,8 +389,8 @@ suite onto the per-model spec files. `daemon-substrate` is the reference scaffol
   `ghc-9.12.4` / container-only-freeze notes.
 
 **Reference docs to create/update:**
-- `../documents/reference/cli_surface.md` documents the `check-code` build-gate subcommand
-  and the `--spec` per-model selection.
+- `../documents/reference/cli_surface.md` documents the `check-code` build-gate subcommand,
+  `cluster delete`, direct inner `--model` debugging, and outer `--force-target` selection.
 
 **Development docs to create/update:**
 - `../documents/development/testing_strategy.md` distinguishes the current automated gates

@@ -336,7 +336,7 @@ transitive CBOR dependencies (same posture as the consumer projects).
 
 The base image ships a warm Haskell store with the common build dependencies pre-resolved.
 `cabal.project.container` imports both the root `cabal.project` and
-`/opt/basecontainer/haskell-deps/cabal.project.freeze`; `docker/linux-substrate.Dockerfile`
+`/opt/basecontainer/haskell-deps/cabal.project.freeze`; `docker/Dockerfile`
 uses that project file for container builds only, so the project container build only compiles
 `daemon-substrate`'s own modules when the base cache is warm. Native `HostBinary` /
 `HostDaemon` builds run against the host's own ghcup-provided `ghc-9.12.4` and do **not**

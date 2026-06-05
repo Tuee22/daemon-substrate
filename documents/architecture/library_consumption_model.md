@@ -224,9 +224,9 @@ records the same way.
   `linux-cpu` are *test-harness cohort* identifiers — used by the harness for cluster
   bootstrap, Pulsar topic suffixes, and Dhall file selection. The library proper is cohort-
   and substrate-agnostic; only the harness under `src/Daemon/Cluster/*`, `hostbootstrap.dhall`,
-  `docker/linux-substrate.Dockerfile`, and `chart/` may branch on cohort, and only for
+  `docker/Dockerfile`, and `chart/` may branch on cohort, and only for
   cluster bring-up purposes.)
-- environment-variable reads (`lookupEnv`, `getEnv`, `getEnvironment`, `setEnv`)
+- shell-inherited daemon configuration reads
 - `proc "<bare-command-name>"` invocations (anything resolved via `$PATH`)
 - direct WAN access (the substrate never talks to HuggingFace, S3, or any external endpoint;
   the consumer's Orchestrator does)
@@ -277,11 +277,12 @@ consumer-domain timescales.
 
 The library code is substrate-agnostic; the *test harness* that proves the library works is
 necessarily aware of the execution model for cluster bootstrap (`Container` project image vs
-`HostBinary` / `HostDaemon` native host build). The harness declares a single `H.Accel.Cpu`
-target and lives outside `src/Daemon/*` — under `hostbootstrap.dhall` (plus the per-model
-`hostbootstrap-hostbinary.dhall` / `hostbootstrap-hostdaemon.dhall` specs),
-`docker/linux-substrate.Dockerfile`, `chart/`, `src/Daemon/Cluster/*`, and the
-`daemon-substrate-test` executable. The host-specific bring-up itself is delegated to
+`HostBinary` / `HostDaemon` native host build). The harness declares one substrate entry per
+hostbootstrap target in the single root `hostbootstrap.dhall`: Apple Silicon `HostDaemon`,
+Linux CPU `Container`, and Linux GPU `HostBinary`. The harness lives outside consumer-facing
+`src/Daemon/*` code — under `hostbootstrap.dhall`, `docker/Dockerfile`,
+`chart/`, `src/Daemon/Cluster/*`, and the `daemon-substrate-test` executable. The host-specific
+bring-up itself is delegated to
 [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap); see
 [`../engineering/hostbootstrap_integration.md`](../engineering/hostbootstrap_integration.md).
 Consumers do not run the harness; it exists for `daemon-substrate`'s own validation. See

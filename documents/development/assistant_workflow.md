@@ -80,17 +80,20 @@ which docs must update together. See:
 - `hostbootstrap` is installed via `pipx` only (`pipx install
   "git+https://github.com/tuee22/hostbootstrap.git#egg=hostbootstrap"`). Do not reintroduce a
   bare-`pip` install instruction for it.
-- Behavior is declared as a single `H.Accel.Cpu` **target** in `hostbootstrap.dhall` at the
-  repository root (`H.config { project, targets = [ H.target H.Accel.Cpu … ] }`). The three
-  execution models (`Container`, `HostBinary`, `HostDaemon`) are driven by separate spec files
-  selected with `--spec`. Do not hand-roll `bootstrap/*.sh`, `compose.yaml`, or multi-language
-  Dockerfile layers — those responsibilities belong to
+- Behavior is declared in the single substrate-keyed `hostbootstrap.dhall` at the repository
+  root. Apple Silicon maps to `HostDaemon`, Linux CPU maps to `Container`, and Linux GPU maps
+  to `HostBinary`; `--force-target` is the validation override. Do not hand-roll
+  `bootstrap/*.sh`, `compose.yaml`, per-model Dhall files, or multi-language Dockerfile layers
+  — those responsibilities belong to
   [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap).
+- `HostDaemon` workers are foreground processes. Bring up the cluster with
+  `hostbootstrap cluster up`, then run `hostbootstrap daemon run` from the invoking terminal,
+  service manager, or test harness. Do not add PID-file start/stop wrappers.
 - The project Dockerfile is intentionally thin: `FROM ${BASE_IMAGE}` plus the project's own
   build steps, a tini-wrapped `ENTRYPOINT`, and a `RUN daemon-substrate-test check-code` build
-  gate. Toolchain installation (`ghc-9.12.4`, Cabal, kube tools, `protoc`) belongs in the
-  `hostbootstrap` base image, not here. The warm-store `cabal.project.freeze` import applies
-  to container builds only.
+  gate. It has no default `CMD`. Toolchain installation (`ghc-9.12.4`, Cabal, kube tools,
+  `protoc`) belongs in the `hostbootstrap` base image, not here. The warm-store
+  `cabal.project.freeze` import applies to container builds only.
 - The in-cluster reconcilers (kind create, Helm install, ConfigMap render, Deployment apply)
   remain in Haskell under `src/Daemon/Cluster/*`. The seam between `hostbootstrap` and
   `daemon-substrate-test` is documented in
@@ -98,7 +101,9 @@ which docs must update together. See:
 
 ## When you write Haskell
 
-- No `lookupEnv` / `getEnv` / `getEnvironment` / `setEnv` / `unsetEnv` anywhere under `src/`.
+- No shell-inherited configuration under consumer-facing `src/Daemon/*` modules. The
+  test-harness CLI may read the hostbootstrap invocation context needed to select the
+  execution model for plain `cluster up/down/delete` handoff.
 - No `proc "<bare-name>"` calls (anything that resolves through `$PATH`). External invocations
   read absolute paths from the typed `BootConfig` record.
 - No substrate identifier branching (`apple-silicon`, `linux-cpu`, etc.) under `src/Daemon/*`
@@ -108,9 +113,12 @@ which docs must update together. See:
 ## When you write tests
 
 - Unit tests are pure and do not require a cluster. They live under `test/unit/`.
-- Integration tests require a kind cluster brought up by `daemon-substrate-test cluster up`.
+- Integration tests require a kind cluster brought up by `hostbootstrap cluster up` or by the
+  direct inner `daemon-substrate-test cluster up` debugging path. HostDaemon integration also
+  requires the harness to own a foreground `hostbootstrap daemon run` process.
   They live under `test/integration/`.
-- Tests use typed fixtures, not environment variables.
+- Tests use typed fixtures for daemon configuration. Tests that cover the hostbootstrap
+  invocation-context seam may set that context explicitly.
 
 ## When you cannot make progress
 

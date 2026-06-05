@@ -5,39 +5,38 @@
 **Referenced by**: [../README.md](../README.md), [assistant_workflow.md](assistant_workflow.md), [testing_strategy.md](testing_strategy.md), [../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md), [../operations/linux_cpu_runbook.md](../operations/linux_cpu_runbook.md), [../engineering/hostbootstrap_integration.md](../engineering/hostbootstrap_integration.md)
 
 > **Purpose**: Get a contributor from a fresh clone to a working build and a green test suite
-> on either of the two supported cohorts (Apple Silicon, Linux CPU).
+> on supported hostbootstrap substrates.
 
 ## TL;DR
 
-- Install `hostbootstrap` via `pipx` (one-time).
+- Install `hostbootstrap` via `pipx`.
 - Clone the repo.
-- Run `hostbootstrap doctor` and `hostbootstrap cluster up` (model selected by `--spec`).
-- Use `daemon-substrate-test test ...` for unit and integration coverage.
+- Run `hostbootstrap doctor` and `hostbootstrap cluster up`.
+- On the AppleSilicon `HostDaemon` target, run `hostbootstrap daemon run` in a second
+  foreground process after cluster bring-up.
+- Use `hostbootstrap run test ...` for the selected target, or
+  `./.build/daemon-substrate-test test ...` after a host-native build.
+- Use `--force-target <apple-silicon|linux-cpu|linux-gpu>` to exercise another declared
+  substrate on the current machine.
 
 ## Current Status
 
-The current repository supports the Haskell library, `daemon-substrate-test` executable, local
-Cabal test stanzas, and the live kind harness on both supported cohorts. Local validation is:
+The repository supports the Haskell library, `daemon-substrate-test` executable, local Cabal
+test stanzas, and live kind harness. The current hostbootstrap target map is:
 
-```bash
-cabal build all --enable-tests
-cabal test daemon-substrate-unit daemon-substrate-lifecycle daemon-substrate-integration daemon-substrate-haskell-style
-```
+| Substrate entry | Model | Normal host |
+|-----------------|-------|-------------|
+| `apple-silicon` | `HostDaemon` | macOS arm64 Apple Silicon |
+| `linux-cpu` | `Container` | Linux without NVIDIA runtime |
+| `linux-gpu` | `HostBinary` | Linux with NVIDIA runtime |
 
-Apple Silicon live `daemon-substrate-test cluster up` brings up deployable Harbor / Pulsar /
-MinIO dependencies, PVC-backed state, orchestrator pods, managed edge-port forwarding, and a
-host worker that completes a request -> orchestrator -> worker -> response smoke handoff.
-Linux live `hostbootstrap cluster up` brings up the outer service container, inner kind
-cluster, Harbor / Pulsar / MinIO dependencies, orchestrator and worker Deployments,
-retained PVCs, and the live integration readiness gate.
+The full validation matrix remains 3×3: three target/model pairs across three ML workflow
+archetypes. A complete hardware run uses three machines; `--force-target` can exercise all
+three target/model pairs on one machine for local validation.
 
-## One-time install
+## One-time Install
 
-[`hostbootstrap`](https://github.com/Tuee22/hostbootstrap) is the canonical infrastructure
-layer for this repository — host detection, host prereqs, base image, and the Container /
-HostBinary / HostDaemon execution models. Install it via `pipx` only.
-
-Install the `pipx` prereq first:
+Install the `pipx` prerequisite first:
 
 - **macOS**: `brew install pipx && pipx ensurepath`
 - **Ubuntu**: `sudo apt install -y pipx && pipx ensurepath`
@@ -48,117 +47,100 @@ Then install `hostbootstrap`:
 pipx install "git+https://github.com/tuee22/hostbootstrap.git#egg=hostbootstrap"
 ```
 
-Stock Python 3.12 on macOS arm64 or Ubuntu 24.04 is sufficient. `hostbootstrap` provisions its
-own native `dhall-to-json` binary on first use.
+`hostbootstrap` provisions its own native `dhall-to-json` binary on first use.
 
-## One CPU target, three execution models
-
-`daemon-substrate` is CPU-only, so it declares a single `H.Accel.Cpu` target that
-`hostbootstrap` matches to every host by capability subsumption (`apple-silicon` →
-`{ Cpu, Metal }`, `linux-cpu` → `{ Cpu }`, `linux-gpu` → `{ Cpu, Cuda }`). The execution model
-is chosen by **spec file**, not by host:
-
-| Spec (`--spec`) | Model | Test binary location |
-|-----------------|-------|----------------------|
-| `hostbootstrap.dhall` (default) | `Container` | inside the thin project container (`FROM ${BASE_IMAGE}`) |
-| `hostbootstrap-hostbinary.dhall` | `HostBinary` | `./.build/daemon-substrate-test` (built natively) |
-| `hostbootstrap-hostdaemon.dhall` | `HostDaemon` | `./.build/daemon-substrate-test` run as a managed launchd (Apple) / systemd (Linux) service |
-
-The harness target is the full **3×3 matrix**: each model exercising each of three ML workflow
-archetypes — continuous batched inference (≈ `infernix`), finite SL / offline-RL training jobs
-(≈ `jitML`), and continuous online RL. `daemon-substrate` is the reference scaffolding for both
-consumers. See [testing_strategy.md](testing_strategy.md).
-
-## First-run prerequisites
-
-`hostbootstrap doctor` detects the substrate and idempotently installs the host prereqs.
-
-### Apple Silicon
-
-`hostbootstrap doctor` verifies / installs:
-
-- Homebrew
-- `ghcup` and `ghc-9.12.4`
-- Cabal (paired with the GHC pin)
-- Colima (the only supported Docker environment on Apple Silicon)
-
-See [../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md) for the
-full prerequisite list and the manual steps the tool cannot do (Apple ID, Homebrew install).
-
-### Linux CPU
-
-`hostbootstrap doctor` verifies / installs:
-
-- Docker Engine with the Compose plugin
-- `docker buildx`
-- User-namespace access to `/var/run/docker.sock`
-
-See [../operations/linux_cpu_runbook.md](../operations/linux_cpu_runbook.md) for the full
-prerequisite list. `ghc-9.12.4`, Cabal, `kubectl`, `helm`, `kind`, and `protoc` are baked into
-the `hostbootstrap` base image; no host-level Haskell toolchain is required for the `Container`
-model.
-
-## Build and test loop
-
-### `Container` model (default)
+## First Run
 
 ```bash
 hostbootstrap doctor
 hostbootstrap cluster up
+hostbootstrap daemon run  # HostDaemon target only; keep this foreground process running
 hostbootstrap run test unit
 hostbootstrap run test integration
-hostbootstrap run cluster status --model container
+# Stop the foreground daemon process with Ctrl-C in its terminal before teardown.
 hostbootstrap cluster down
 ```
 
-`hostbootstrap run <cmd...>` dispatches into the project container, which carries the
-toolchain (from the base image) and the compiled `daemon-substrate-test` binary.
-
-### `HostDaemon` / `HostBinary` models (native host build)
+On `HostBinary` and `HostDaemon` targets, the build artifact is also available directly:
 
 ```bash
-hostbootstrap doctor                                              # one-time: install prereqs
-hostbootstrap cluster up --spec hostbootstrap-hostdaemon.dhall    # build binary, install managed service, bring kind cluster up
 ./.build/daemon-substrate-test test unit
 ./.build/daemon-substrate-test test integration
-./.build/daemon-substrate-test cluster status
-hostbootstrap cluster down --spec hostbootstrap-hostdaemon.dhall  # tear down; preserves ./.data/
+./.build/daemon-substrate-test cluster status --model host-daemon
 ```
 
-After the first bring-up, `./.build/daemon-substrate-test ...` is the canonical command
-surface for the test commands. `hostbootstrap` is only invoked when the managed service or
-prerequisites change.
+## Forced Target Loop
 
-## What's in `./.build/` and `./.data/`
+Use forced targets when validating the full hostbootstrap surface from one machine:
 
-- `./.build/` (native `HostBinary` / `HostDaemon` builds): the compiled
-  `daemon-substrate-test` binary, the staged Dhall configs, the kubeconfig
-  (`daemon-substrate.kubeconfig`), and the chosen edge port (`edge-port.json`).
-- `./.data/`: durable cluster state (PV-backing files), runtime state (Pulsar / MinIO / Harbor
-  data). Under the `Container` model this is the only bind mount into the project container.
+```bash
+hostbootstrap cluster up --force-target apple-silicon
+hostbootstrap daemon run --force-target apple-silicon
+hostbootstrap run --force-target apple-silicon test integration
+# Stop the foreground daemon process with Ctrl-C in its terminal before teardown.
+hostbootstrap cluster down --force-target apple-silicon
 
-Neither directory is checked in. `hostbootstrap cluster down` preserves both so a fresh `up`
-is fast; `hostbootstrap cluster delete` (thorough teardown) also preserves `./.data/`.
+hostbootstrap cluster up --force-target linux-cpu
+hostbootstrap run --force-target linux-cpu test integration
+hostbootstrap cluster down --force-target linux-cpu
 
-## When things go wrong
+hostbootstrap cluster up --force-target linux-gpu
+hostbootstrap run --force-target linux-gpu test integration
+hostbootstrap cluster down --force-target linux-gpu
+```
 
-- `daemon-substrate-test cluster status` currently reports known kind clusters and node
-  readiness. Lifecycle phase / heartbeat detail remains target telemetry. Long-running
-  phases such as image build and dependency rollout can take minutes; wall-clock duration
-  alone is not failure.
-- The kubeconfig path is repo-local — your shell's `~/.kube/config` is never modified. To run
-  `kubectl` directly: `KUBECONFIG=./.build/daemon-substrate.kubeconfig kubectl get pods -A`
-  (Apple) or via `hostbootstrap run` on Linux.
-- If the cluster gets into a wedged state, `daemon-substrate-test cluster down` followed by
-  `daemon-substrate-test cluster up` is the inner reset switch; `hostbootstrap cluster down`
-  followed by `hostbootstrap cluster up` is the outer reset. `./.data/` is preserved across
-  both.
+The direct inner `--model` flag remains a debugging override for `daemon-substrate-test`
+itself. Normal operator workflows select the model through `hostbootstrap`.
+
+## Build And Test Without A Cluster
+
+Pure local checks still work through Cabal:
+
+```bash
+cabal build all --enable-tests
+cabal test daemon-substrate-unit daemon-substrate-lifecycle daemon-substrate-haskell-style
+```
+
+`daemon-substrate-integration` requires a live harness cluster brought up by `hostbootstrap
+cluster up`.
+
+## State Directories
+
+- `./.build/`: host-native binaries, host-native kubeconfig, edge-port records, and HostDaemon
+  host-native runtime records.
+- `./.data/`: durable cluster state and PV-backing files.
+
+Neither directory is checked in. `hostbootstrap cluster down` and `hostbootstrap cluster
+delete` preserve `./.data/`.
+
+## Reboot Policy
+
+`hostbootstrap` does not install launchd/systemd units and does not create restart-after-reboot
+Docker containers. After reboot:
+
+```bash
+hostbootstrap cluster up
+hostbootstrap daemon run  # HostDaemon target only
+```
+
+Operators who want boot-time automation can create their own OS unit outside this repository
+and outside `hostbootstrap`; that unit should supervise `hostbootstrap daemon run` directly.
+
+## When Things Go Wrong
+
+- `hostbootstrap run cluster status` reports known kind clusters and node readiness for the
+  selected target.
+- Long-running phases such as image build and dependency rollout can take minutes; wall-clock
+  duration alone is not failure.
+- The kubeconfig path is repo-local and does not mutate the operator's global kubeconfig. Use
+  `kubectl --kubeconfig ./.build/daemon-substrate.kubeconfig get pods -A` for host-native
+  targets when direct inspection is needed.
+- If the cluster is wedged, use `hostbootstrap cluster down` followed by
+  `hostbootstrap cluster up`. Use `hostbootstrap cluster delete` for the thorough inner
+  teardown path.
 
 ## Cross-references
 
-- Current status: the executable parser, Cabal test stanzas, live cluster runner
-  interpreters, deployable dependency charts, PVC-backed kind state, live service loops, and
-  both-cohort readiness validation are implemented.
 - hostbootstrap integration: [../engineering/hostbootstrap_integration.md](../engineering/hostbootstrap_integration.md)
 - Testing strategy: [testing_strategy.md](testing_strategy.md)
 - Apple-specific runbook: [../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md)

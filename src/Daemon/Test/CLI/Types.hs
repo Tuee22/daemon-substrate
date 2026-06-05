@@ -15,11 +15,13 @@ data CliCommand
 data ClusterCommand
   = ClusterUp !ClusterOptions
   | ClusterDown !ClusterOptions
+  | ClusterDelete !ClusterOptions
   | ClusterStatus !ClusterOptions
   deriving stock (Eq, Show)
 
 data ClusterOptions = ClusterOptions
   { clusterOptionsModel :: !HarnessExecutionModel,
+    clusterOptionsModelExplicit :: !Bool,
     clusterOptionsStayResident :: !Bool
   }
   deriving stock (Eq, Show)
@@ -58,6 +60,7 @@ parseCliCommand _ = Left renderCliHelp
 parseClusterCommand :: [String] -> Either Text ClusterCommand
 parseClusterCommand ("up" : rest) = ClusterUp <$> parseClusterOptions True rest
 parseClusterCommand ("down" : rest) = ClusterDown <$> parseClusterOptions False rest
+parseClusterCommand ("delete" : rest) = ClusterDelete <$> parseClusterOptions False rest
 parseClusterCommand ("status" : rest) = ClusterStatus <$> parseClusterOptions False rest
 parseClusterCommand _ = Left renderCliHelp
 
@@ -68,7 +71,7 @@ parseClusterOptions allowStayResident =
     go options [] = Right options
     go options ("--model" : value : rest) =
       case parseExecutionModel (Text.pack value) of
-        Just model -> go options{clusterOptionsModel = model} rest
+        Just model -> go options{clusterOptionsModel = model, clusterOptionsModelExplicit = True} rest
         Nothing -> Left "cluster --model must be container, host-binary, or host-daemon"
     go options ("--stay-resident" : rest)
       | allowStayResident = go options{clusterOptionsStayResident = True} rest
@@ -79,6 +82,7 @@ defaultClusterOptions :: ClusterOptions
 defaultClusterOptions =
   ClusterOptions
     { clusterOptionsModel = ExecutionContainer,
+      clusterOptionsModelExplicit = False,
       clusterOptionsStayResident = False
     }
 
@@ -122,6 +126,7 @@ renderCliHelp =
       "Commands:",
       "  cluster up [--model <container|host-binary|host-daemon>] [--stay-resident]",
       "  cluster down [--model <container|host-binary|host-daemon>]",
+      "  cluster delete [--model <container|host-binary|host-daemon>]",
       "  cluster status [--model <container|host-binary|host-daemon>]",
       "  test unit",
       "  test lifecycle",

@@ -277,7 +277,7 @@ purposes, and this is the only allowed seam where substrate identifiers appear:
 - `hostbootstrap.dhall` at the repository root declares the per-substrate model
   (`Container` / `HostBinary` / `HostDaemon`); substrate detection, host-prereq install, and
   container / daemon lifecycle are owned by [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap).
-- `docker/linux-substrate.Dockerfile` is substrate-specific but intentionally thin
+- `docker/Dockerfile` is substrate-specific but intentionally thin
   (`FROM ${BASE_IMAGE}` + project build steps).
 - `src/Daemon/Cluster/*` (kind cluster setup) and the `chart/` directory carry per-substrate
   variation.
@@ -296,11 +296,15 @@ record into the library entry points.
 - The library defines the shape of `BootConfig role app` (where `role` selects Worker or
   Orchestrator and `app` is a consumer-specific plug); the on-disk layout of the Dhall file is
   the consumer's responsibility.
-- No library module may call `lookupEnv`, `getEnv`, `getEnvironment`, `setEnv`, or `unsetEnv`.
+- Consumer-facing library modules do not read shell-inherited values for configuration. Narrow
+  non-configuration exceptions are allowed for transport metadata and the test-harness
+  hostbootstrap invocation-context seam.
 - No library module may call `proc "<bare-command-name>"` where the command name resolves through
   `$PATH`. Any external invocation reads the absolute path from a typed config field passed in
   by the consumer.
-- Tests pass typed `BootConfig` fixtures rather than constructing one from environment state.
+- Tests pass typed `BootConfig` fixtures rather than constructing daemon configuration from
+  shell-inherited state. Tests that cover the hostbootstrap invocation-context seam may set that
+  context explicitly.
 - The doctrine matches the consumer projects' configuration doctrine; this section exists to
   state that the library does not loosen it.
 
@@ -311,8 +315,8 @@ and `Daemon.Pulsar.Admin.Http` calls the admin REST API in-process. Pulsar is th
 deadline-sensitive hot path, so a subprocess or WebSocket-proxy hop on that path is precisely
 the latency the substrate cannot afford. The in-process client still obeys the rules above —
 broker service URL, admin URL, TLS / auth, pool size, and timeouts are typed config fields read
-from `BootConfig` (and hot-tunable knobs from `LiveConfig`), never the environment or a
-`$PATH`-resolved command. See
+from `BootConfig` (and hot-tunable knobs from `LiveConfig`), never shell-inherited
+configuration or a `$PATH`-resolved command. See
 [`../documents/engineering/pulsar_native_client.md`](../documents/engineering/pulsar_native_client.md).
 
 ### N. Haskell Quality Gate Contract
@@ -370,33 +374,31 @@ Consumers are not expected to run it; it exists for `daemon-substrate`'s own val
 
 ### Q. Hardware Cohort Validation Cadence
 
-Phase work that touches the test harness is planned around two hardware cohorts.
+Phase work that touches the test harness is planned around three hostbootstrap targets.
 
 Definitions:
 
-- **Apple cohort:** Apple Silicon host-native workflow through `hostbootstrap cluster up`
-  (which builds the binary and installs the LaunchDaemon per the `HostDaemon` model) or direct
-  `./.build/daemon-substrate-test ...` commands.
-- **Linux CPU cohort:** Linux outer-container workflow through `hostbootstrap cluster up`
-  (which builds the thin project container `FROM` the `hostbootstrap` base tag and runs it
-  per the `Container` model) or `hostbootstrap run ...` for ad-hoc invocations inside the
-  container.
+- **Apple target:** Apple Silicon `HostDaemon` workflow through `hostbootstrap cluster up`
+  (binary build and plain `cluster up` handoff) plus caller-owned foreground
+  `hostbootstrap daemon run`, or direct `./.build/daemon-substrate-test ...` commands.
+- **Linux CPU target:** Linux `Container` workflow through `hostbootstrap cluster up`
+  (thin project container `FROM` the hostbootstrap base tag, one-shot `cluster up` handoff).
+- **Linux GPU target:** Linux `HostBinary` workflow through `hostbootstrap cluster up`
+  (native binary built via the selected hostbootstrap base and plain `cluster up` handoff).
 
-There is intentionally no GPU cohort. The mock engine performs no accelerator work, so a CUDA or
-Metal cohort would add cost without exercising any library surface the CPU cohort does not
-already cover. Consumers (`infernix`, `jitML`) carry their own GPU cohort obligations against
-their own model matrices.
+The mock engine performs no accelerator work. The Linux GPU target validates hostbootstrap's
+Linux GPU substrate, CUDA-flavored base-image path, and HostBinary lifecycle shape; consumers
+(`infernix`, `jitML`) carry real GPU correctness obligations against their own model matrices.
 
 Rules:
 
 - Sprint development and first validation should be possible on the machine that owns the changed
-  path. A phase must not require alternating between Apple Silicon and Linux CPU after every
-  sprint.
-- Sprint `Validation` sections distinguish local cohort gates from counterpart cohort closure
-  when hardware-specific evidence is required.
-- A phase may stay `Active` with an explicit `Apple cohort pending` or `Linux CPU cohort
-  pending` residual after one cohort validates, but it cannot move to `Done` until both cohorts
-  have run their full-suite gates against the same phase state.
-- The paired closure batch is the preferred switching boundary: finish a coherent phase slice on
-  one machine, record that evidence, then run the counterpart machine's full validation once for
-  the batch.
+  path. Use `--force-target` to exercise all three declared targets on one machine when that is
+  the practical validation path.
+- Sprint `Validation` sections distinguish local forced-target gates from physical hardware
+  closure when hardware-specific evidence is required.
+- A phase may stay `Active` with an explicit target-pending residual after one target validates,
+  but it cannot move to `Done` until the required target set has run its full-suite gates against
+  the same phase state.
+- The closure batch is the preferred switching boundary: finish a coherent phase slice on one
+  machine, record that evidence, then run the remaining target validation once for the batch.

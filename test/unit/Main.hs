@@ -96,6 +96,7 @@ import Dhall qualified
 import GHC.Generics (Generic)
 import Lens.Family2 ((&), (.~), (^.))
 import System.Directory (createDirectoryIfMissing, getTemporaryDirectory)
+import System.Environment (setEnv, unsetEnv)
 import System.Exit (ExitCode (ExitFailure))
 import System.FilePath ((</>))
 
@@ -799,11 +800,15 @@ testCliSurface = do
                     ( ClusterUp
                         ClusterOptions
                             { clusterOptionsModel = ExecutionHostDaemon
+                            , clusterOptionsModelExplicit = True
                             , clusterOptionsStayResident = True
                             }
                     )
                 )
         )
+    liftAssert
+        "CLI parses cluster delete"
+        (parseCliCommand ["cluster", "delete"] == Right (CliCluster (ClusterDelete defaultClusterOptions)))
     liftAssert "CLI parses test all" (parseCliCommand ["test", "all"] == Right (CliTest TestAll))
     liftAssert "CLI parses check-code" (parseCliCommand ["check-code"] == Right CliCheckCode)
     liftAssert
@@ -821,12 +826,21 @@ testCliSurface = do
         )
     liftAssert "CLI help lists service command" ("service --role" `Text.isInfixOf` renderCliHelp)
     liftAssert "CLI help lists check-code" ("check-code" `Text.isInfixOf` renderCliHelp)
+    liftAssert "CLI help lists cluster delete" ("cluster delete" `Text.isInfixOf` renderCliHelp)
     liftAssert "cluster up render includes kind create" ("kind-create" `Text.isInfixOf` renderClusterCommand (ClusterUp defaultClusterOptions))
+    unsetEnv "HOSTBOOTSTRAP_MODEL"
+    setEnv "HOSTBOOTSTRAP_TARGET" "linux-gpu"
+    targetResolved <- resolveClusterExecutionModel defaultClusterOptions
+    unsetEnv "HOSTBOOTSTRAP_TARGET"
+    liftAssert "hostbootstrap target resolves Linux GPU to host-binary" (targetResolved == Right ExecutionHostBinary)
     liftAssert
         "test all render includes integration suite"
         ("daemon-substrate-integration" `Text.isInfixOf` renderHarnessTestCommand TestAll)
     liftAssert "matrix has nine cases" (matrixCaseCount == 9)
     liftAssert "matrix covers every model/archetype pair once" matrixCoversEveryPair
+    liftAssert
+        "hostbootstrap target model map covers Apple"
+        (executionModelForHostbootstrapTarget "apple-silicon" == Just ExecutionHostDaemon)
     liftAssert
         "continuous inference maps to infernix rows"
         (13 `elem` workflowArchetypeAuditRows ContinuousBatchedInference && 26 `elem` workflowArchetypeAuditRows ContinuousBatchedInference)

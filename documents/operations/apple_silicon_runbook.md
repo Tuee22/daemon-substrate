@@ -5,168 +5,147 @@
 **Referenced by**: [../README.md](../README.md), [cluster_bootstrap_runbook.md](cluster_bootstrap_runbook.md), [linux_cpu_runbook.md](linux_cpu_runbook.md), [../development/local_dev.md](../development/local_dev.md), [../engineering/hostbootstrap_integration.md](../engineering/hostbootstrap_integration.md)
 
 > **Purpose**: Apple Silicon host-native operator workflow for the `daemon-substrate-test`
-> harness — prerequisites, bring-up, the on-host worker daemon lifecycle, and recovery
+> harness — prerequisites, bring-up, the host worker foreground daemon lifecycle, and recovery
 > guidance.
 
 ## TL;DR
 
-- Apple Silicon (`apple-silicon`) is one of the hosts the single `H.Accel.Cpu` target runs
-  on; `hostbootstrap` matches it by capability subsumption (`apple-silicon` satisfies
-  `{ Cpu, Metal }`). In the `HostDaemon` and `HostBinary` models the `daemon-substrate-test`
-  binary builds and runs directly on macOS arm64; no Docker container layer for the worker.
-- Under the `HostDaemon` model (selected with
-  `hostbootstrap cluster up --spec hostbootstrap-hostdaemon.dhall`) `hostbootstrap` builds the
-  binary via `cabal install` and installs a managed launchd service. The same `Cpu`
-  `HostDaemon` declaration installs a systemd service on Linux.
-- The kind cluster (Harbor, Pulsar, MinIO, orchestrator) runs inside Colima.
-- The worker daemon runs as `./.build/daemon-substrate-test service --role worker` *outside*
-  the cluster on the host, under the LaunchDaemon `hostbootstrap` installed.
-- `./.build/` carries the compiled binary, the staged Dhall, the kubeconfig, and the edge-port
-  record.
+- Apple Silicon selects the `AppleSilicon` entry in `hostbootstrap.dhall`, which uses the
+  `HostDaemon` model.
+- `hostbootstrap cluster up` builds `./.build/daemon-substrate-test`, forwards
+  `daemon-substrate-test cluster up`, and exits.
+- `hostbootstrap daemon run` runs
+  `daemon-substrate-test service --role worker --config dhall/worker.dhall` as a foreground
+  process. The caller owns logs, restart, and termination.
+- Stop the foreground daemon process before `hostbootstrap cluster down` or
+  `hostbootstrap cluster delete`.
+- `hostbootstrap` does not install launchd units. After reboot, run `hostbootstrap cluster up`
+  again and restart `hostbootstrap daemon run`.
+- The kind cluster, Harbor, Pulsar, MinIO, and orchestrator run inside the local Docker runtime;
+  the worker runs outside the cluster on macOS.
 
 ## Prerequisites
 
 Minimal pre-existing host state:
 
-- macOS on Apple Silicon (arm64)
-- `pipx` installed (`brew install pipx && pipx ensurepath`) with `hostbootstrap` installed via
-  `pipx` (see [../development/local_dev.md](../development/local_dev.md))
-- Homebrew installed (`hostbootstrap doctor` will refuse to run without it)
-- `ghcup` installed
+- macOS on Apple Silicon
+- Homebrew
+- `pipx` with `hostbootstrap` installed via `pipx`
+- `ghcup`
 
-`hostbootstrap doctor` installs / verifies:
-
-- `ghc-9.12.4` via ghcup
-- Cabal (paired with the GHC pin) via ghcup
-- `protoc` via Homebrew
-- Colima via Homebrew (the only supported Docker environment on Apple Silicon)
-- Kind, `kubectl`, `helm` via Homebrew
-
-These match the prereqs the `HostDaemon` model's `H.HostReqs` (just `{ ghc }`) declares for
-this repository.
+`hostbootstrap doctor` verifies the host and reports missing prerequisites. Apple host-native
+builds use ghcup-provided `ghc-9.12.4` and Cabal. The Docker runtime and Kubernetes tools are
+used for the kind cluster and are validated by `hostbootstrap`.
 
 ## Bring-up
 
 ```bash
-hostbootstrap doctor                                              # one-time: install prereqs
-hostbootstrap cluster up --spec hostbootstrap-hostdaemon.dhall    # build binary, install launchd service
-./.build/daemon-substrate-test cluster up                        # inner kind-cluster reconciler
+hostbootstrap doctor
+hostbootstrap cluster up
+hostbootstrap daemon run
 ```
 
-`hostbootstrap cluster up` is a restartable reconciler. Under the `HostDaemon` model on Apple
-Silicon it:
-
-1. Builds `./.build/daemon-substrate-test` from source via the `cabal install` command
-   declared in `hostbootstrap.dhall`'s `H.Build`
-2. Installs the LaunchDaemon at `/Library/LaunchDaemons/com.hostbootstrap.daemon-substrate.plist`
-   that runs `./.build/daemon-substrate-test service --role worker --config dhall/worker.dhall`
-3. Leaves in-cluster reconciliation to the inner `./.build/daemon-substrate-test cluster up`
-   command. The inner reconciler now rolls out the dependency StatefulSets, PVC-backed
-   storage, Pulsar / MinIO admin setup, orchestrator Deployment, and reconciler Failover
-   leadership. It also starts managed localhost forwards for Pulsar, Pulsar admin, and
-   MinIO; the host worker has been validated through a live request -> orchestrator -> host
-   worker -> response smoke handoff. The matching Linux cohort `Ready` gate is also
-   validated.
-
-Subsequent bring-ups skip prerequisite verification when the active checkpoints match. The
-launchd service starts the worker before any user logs in — supporting headless remote SSH.
-The same `Cpu` `HostDaemon` declaration installs a systemd unit on Linux.
-
-To inspect:
+For single-machine matrix validation from another host:
 
 ```bash
-launchctl list | grep daemon-substrate
-launchctl print system/com.hostbootstrap.daemon-substrate
+hostbootstrap cluster up --force-target apple-silicon
 ```
 
-## On-host worker daemon
+On Apple Silicon, `cluster up`:
 
-The worker runs under the LaunchDaemon as a long-running process. Recommended invocation for
-foreground debugging (with the LaunchDaemon stopped):
+1. Builds `./.build/daemon-substrate-test` with the templated hostbootstrap Cabal command.
+2. Runs `./.build/daemon-substrate-test cluster up`.
+3. Returns without starting or supervising the worker daemon.
 
-```bash
-sudo launchctl bootout system /Library/LaunchDaemons/com.hostbootstrap.daemon-substrate.plist
-./.build/daemon-substrate-test service \
-    --role worker \
-    --config dhall/worker.dhall
-```
+Run `hostbootstrap daemon run` after `cluster up` to start the host worker in the foreground.
+Use a second terminal for local development, or a launchd/systemd unit if you want supervision.
+
+The inner reconciler rolls out Harbor / Pulsar / MinIO, PVC-backed storage, the orchestrator
+Deployment, and edge-port forwarding. The host worker reads the edge-port record and subscribes
+to the Apple Silicon harness work topic.
+
+## Host Worker
 
 The worker:
 
-- reads its Dhall config (Pulsar endpoint, MinIO endpoint, cohort tag, cache directory)
-- discovers the in-cluster Pulsar / Pulsar admin / MinIO endpoints via
-  `./.build/edge-port.json`, whose `pulsarPort`, `pulsarAdminPort`, and `minioPort` fields
-  map to managed localhost port-forwards
+- reads `dhall/worker.dhall`
+- discovers Pulsar / Pulsar admin / MinIO endpoints from `./.build/edge-port.json`
 - subscribes to `test.batch.apple-silicon` in `Shared` mode
 - writes its local cache to `./.cache/daemon-substrate-worker/`
-- logs to stdout / stderr; LaunchDaemon-launched logs reach `os_log`
+- logs to the foreground stdout/stderr stream owned by the invoking shell or supervisor
 
-### Stopping the worker
+For direct inner debugging, use the same foreground process shape without hostbootstrap:
 
-`hostbootstrap cluster down` removes the LaunchDaemon cleanly. Foreground operator runs stop
-on `Ctrl+C`; the worker traps SIGINT / SIGTERM, finishes the in-flight request, drains its
-subscription cleanly, and exits.
+```bash
+hostbootstrap cluster down
+./.build/daemon-substrate-test cluster up --model host-daemon
+./.build/daemon-substrate-test service --role worker --config dhall/worker.dhall
+```
 
 ## Teardown
 
 ```bash
-hostbootstrap cluster down                    # remove LaunchDaemon
-./.build/daemon-substrate-test cluster down   # inner kind-cluster teardown
+# Stop the foreground hostbootstrap daemon run process with Ctrl-C or supervisor termination.
+hostbootstrap cluster down
+hostbootstrap cluster delete
 ```
 
-Preserves `./.data/`, `./.build/`, the worker's `./.cache/`, and installed Homebrew /
-ghcup-managed prerequisites. `hostbootstrap cluster delete` performs a thorough teardown but
-still preserves `./.data/`.
+Preserved state:
 
-## Recovery from common failures
+- `./.data/`
+- `./.build/` artifacts that remain useful for debugging
+- `./.cache/daemon-substrate-worker/`
+- installed Homebrew / ghcup-managed prerequisites
+
+## Reboot Policy
+
+`hostbootstrap` intentionally does not install launchd units. A reboot stops the repo-local host
+daemon process and any Docker runtime state that is not otherwise managed by the operator. Bring
+the harness back with:
+
+```bash
+hostbootstrap cluster up
+hostbootstrap daemon run
+```
+
+Operators who want automatic boot-time startup can create their own launchd unit outside
+`hostbootstrap`; that unit should supervise `hostbootstrap daemon run` directly.
+
+## Recovery From Common Failures
 
 ### Cluster pods stuck in `Pending`
 
-The Apple Silicon kind cluster is configured for one worker node plus one control-plane
-because the Worker runs on the host, not as an in-cluster Deployment. Check with:
+The Apple Silicon harness topology uses a host-native worker, so the worker is not scheduled as
+an in-cluster Deployment. Check nodes with:
 
 ```bash
-KUBECONFIG=./.build/daemon-substrate.kubeconfig kubectl get nodes
+kubectl --kubeconfig ./.build/daemon-substrate.kubeconfig get nodes
 ```
 
-If the node count does not match that topology, `daemon-substrate-test cluster down` +
-`cluster up` re-creates the cluster with the supported topology.
+If topology is wrong, run `hostbootstrap cluster down` followed by `hostbootstrap cluster up`.
 
 ### Edge port collision
 
-Another process took 9090. The bring-up flow handles this automatically by incrementing.
-Check `./.build/edge-port.json` for the actually-chosen port; restart the worker LaunchDaemon
-so it reads the updated value:
+The bring-up flow increments from the default base port until it finds an available range. Check
+`./.build/edge-port.json` for the chosen ports and rerun `hostbootstrap cluster up` so the host
+worker can be restarted with the current record.
 
-```bash
-sudo launchctl kickstart -k system/com.hostbootstrap.daemon-substrate
-```
+### Host worker cannot reach Pulsar
 
-### Host worker cannot reach in-cluster Pulsar
+Check the Pulsar admin edge port in `./.build/edge-port.json`. If the port is closed but
+dependency pods are Ready, rerun `hostbootstrap cluster up` to refresh edge-port forwarding,
+then restart the foreground daemon process.
 
-Check the Pulsar admin edge port is reachable:
-`curl http://localhost:<pulsarAdminPort>/admin/v2/clusters`. If the port is closed but
-dependency pods are Ready, rerun `daemon-substrate-test cluster up` to recreate the managed
-port-forwards, or `daemon-substrate-test cluster down` + `cluster up` to recreate the kind
-cluster too.
+### Docker runtime not running
 
-### Colima not running
+Start the local Docker runtime and rerun `hostbootstrap cluster up`. `hostbootstrap doctor`
+reports missing or unreachable Docker prerequisites but does not own reboot-time startup.
 
-`colima status` reports the runtime state. `colima start` if stopped. `hostbootstrap doctor`
-ensures Colima is running on first invocation but does not babysit it.
+## What This Runbook Does Not Cover
 
-### LaunchDaemon failed to load
-
-`sudo launchctl print system/com.hostbootstrap.daemon-substrate` reports the failure reason.
-Common causes: missing binary at the declared path (re-run `hostbootstrap cluster up`),
-permissions on `./.build/` (LaunchDaemons run as root; ensure the binary is readable).
-
-## What this runbook does not cover
-
-- Real ML workloads — the mock engine on the host performs no Metal work. Apple Metal
-  validation lives in consumer projects (`infernix`) that bring real engines.
-- Multiple host workers on the same Apple machine — the harness assumes one worker per host.
-- Networking between two Apple hosts — the harness is single-host.
+- Real ML workloads; the mock engine performs no Metal work.
+- Multiple host workers on the same Apple machine.
+- Networking between multiple Apple hosts.
 
 ## Cross-references
 

@@ -109,25 +109,32 @@ The repository ships a self-managed end-to-end test harness purely to prove that
 
 Upstream callers of the workflow (the test driver, in the harness; real users, in production) **interact with the orchestrator exclusively through Pulsar** by publishing to the fan-in topic. The substrate exposes no separate HTTP / gRPC / REST surface for upstream callers.
 
-The harness runs the same `H.Accel.Cpu` target on every host. The execution model is chosen by spec file, not by host:
+The harness is declared in one substrate-keyed `hostbootstrap.dhall`. Each hardware substrate
+has one model:
 
-- **Container** (`hostbootstrap.dhall`, default) — `hostbootstrap cluster up` builds a thin project container `FROM` the `hostbootstrap` base image and runs `daemon-substrate-test cluster up` inside it.
-- **HostBinary** (`hostbootstrap-hostbinary.dhall`) — `hostbootstrap` builds `./.build/daemon-substrate-test` natively and invokes it per command on the host.
-- **HostDaemon** (`hostbootstrap-hostdaemon.dhall`) — `hostbootstrap` runs `daemon-substrate-test service --role worker` as a managed long-lived service (launchd on Apple, systemd on Linux).
+- **AppleSilicon → HostDaemon** — `hostbootstrap cluster up` builds
+  `./.build/daemon-substrate-test` and runs `daemon-substrate-test cluster up`; the host worker
+  is a separate foreground `hostbootstrap daemon run` process owned by the operator, supervisor,
+  or test harness.
+- **LinuxCpu → Container** — `hostbootstrap cluster up` builds a thin project container
+  `FROM` the `hostbootstrap` base image and forwards `cluster up` to the tini-wrapped
+  `daemon-substrate-test` entrypoint.
+- **LinuxGpu → HostBinary** — `hostbootstrap cluster up` builds
+  `./.build/daemon-substrate-test` and invokes it per command on the host.
 
 Consumers do **not** run the harness — it exists for `daemon-substrate`'s own validation only. The cluster bootstrap flow, the operator-facing commands, and the coverage obligations are documented in [`documents/development/testing_strategy.md`](documents/development/testing_strategy.md) and [`documents/operations/cluster_bootstrap_runbook.md`](documents/operations/cluster_bootstrap_runbook.md).
 
-### One CPU target on every host; three execution models
+### Three substrate targets; three execution models
 
-`daemon-substrate` is **CPU-only** — the mock engine performs no GPU, Metal, or CUDA work — so the harness declares exactly one acceleration target: `H.Accel.Cpu`. `hostbootstrap` detects the host and matches it to the target by capability subsumption: an `apple-silicon` host satisfies `{Cpu, Metal}`, a `linux-cpu` host satisfies `{Cpu}`, and a `linux-gpu` host satisfies `{Cpu, Cuda}`. A single `Cpu` target therefore runs on **every** host — Apple, linux-cpu, and linux-gpu, on both amd64 and arm64 — with no host-keyed cohort split.
+`daemon-substrate` is **CPU-only** — the mock engine performs no GPU, Metal, or CUDA work —
+but the harness intentionally keeps one model per substrate so the project exercises the same
+outer lifecycle shapes as the consumer projects. A full hardware validation run uses three
+machines: Apple Silicon for `HostDaemon`, Linux CPU for `Container`, and Linux GPU for
+`HostBinary`.
 
-The substrate exercises the same library across the three `hostbootstrap` execution **models**:
-
-- **Container** — the harness binary runs inside a thin project container `FROM` the `hostbootstrap` base image.
-- **HostBinary** — the harness binary runs natively on the host, invoked per command.
-- **HostDaemon** — the harness binary runs as a managed long-lived service (launchd on Apple, systemd on Linux) from one declaration.
-
-Because one spec carries one model, the three models are driven by separate spec files selected with `hostbootstrap … --spec <file>`: `hostbootstrap.dhall` (Container, the default), `hostbootstrap-hostbinary.dhall` (HostBinary), and `hostbootstrap-hostdaemon.dhall` (HostDaemon). A `Cpu` HostDaemon now runs on Apple (launchd) and Linux (systemd) from one declaration.
+For local validation, `hostbootstrap cluster up --force-target <substrate>` can select any
+declared substrate on one machine. That preserves the full **3×3** model × workflow matrix
+without reintroducing per-model spec files.
 
 ### Reference scaffolding: the 3×3 model × workflow matrix
 
@@ -143,9 +150,10 @@ Because one spec carries one model, the three models are driven by separate spec
 [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap) — a host-installed Python CLI plus
 prebuilt base container images that standardize host detection, host-prereq install,
 multi-language toolchain (`ghc-9.12.4`, Cabal, kube tools, `protoc`, `ormolu`, `hlint`, warm Haskell
-store), and the Container / HostBinary / HostDaemon execution models. `daemon-substrate` declares its own
-behavior as a single `H.Accel.Cpu` target in a typed `hostbootstrap.dhall` at the repository
-root; the operator entrypoint is `hostbootstrap cluster up`. The boundary between what
+store), and the Container / HostBinary / HostDaemon execution models. `daemon-substrate` declares
+its harness as three substrate entries in the single typed `hostbootstrap.dhall` at the
+repository root; the cluster operator entrypoint is `hostbootstrap cluster up`, and HostDaemon
+workers run in the foreground with `hostbootstrap daemon run`. The boundary between what
 `hostbootstrap` owns and what `daemon-substrate-test` owns is described in
 [`documents/engineering/hostbootstrap_integration.md`](documents/engineering/hostbootstrap_integration.md).
 
@@ -162,7 +170,10 @@ one infrastructure substrate.
 
 [`DEVELOPMENT_PLAN/README.md`](DEVELOPMENT_PLAN/README.md) is the authoritative current-state status for this repository. The phase plan, sprint status, and per-phase remaining work all live there. This README describes the intended library shape and contract; the plan describes how much of it actually exists today.
 
-The single-`Cpu`-target `hostbootstrap.dhall`, the three per-model spec files, the tini-wrapped container `ENTRYPOINT` with the `daemon-substrate-test check-code` build gate, and the 3×3 model × workflow matrix are implemented repo-side and tracked as closed work in `DEVELOPMENT_PLAN/`.
+The substrate-keyed `hostbootstrap.dhall`, the tini-wrapped container `ENTRYPOINT` with the
+`daemon-substrate-test check-code` build gate, the plain `cluster up/down/delete` handoff, and
+the 3×3 model × workflow matrix are implemented repo-side and tracked as closed work in
+`DEVELOPMENT_PLAN/`.
 
 ## License
 

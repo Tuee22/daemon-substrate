@@ -20,14 +20,16 @@
   subcommands are the *inner* reconcilers, invoked from inside the `Container` model's project
   container or as the `HostBinary` / `HostDaemon` host process. See
   [../engineering/hostbootstrap_integration.md](../engineering/hostbootstrap_integration.md).
+- For the `HostDaemon` target, the host worker itself is run by
+  `hostbootstrap daemon run` as a foreground process after cluster bring-up.
 
 ## Current Status
 
-The cluster, test, `service`, and `check-code` command families below are implemented. Cluster
-commands accept an explicit execution model (`container`, `host-binary`, or `host-daemon`) so
-the per-model `hostbootstrap` specs can select worker placement without host-keyed branching in
-the inner CLI. The `check-code` subcommand is wired into the project Dockerfile as
-`RUN daemon-substrate-test check-code` and delegates to the local style gate.
+The cluster, test, `service`, and `check-code` command families below are implemented. Outer
+`hostbootstrap cluster up/down/delete` commands forward plain inner `cluster up/down/delete`.
+For direct debugging, cluster commands still accept an explicit execution model (`container`,
+`host-binary`, or `host-daemon`). The `check-code` subcommand is wired into the project
+Dockerfile as `RUN daemon-substrate-test check-code` and delegates to the local style gate.
 
 ## Top-level commands
 
@@ -43,6 +45,7 @@ preservation, and the `daemon-substrate-integration` live readiness gate are val
 |---------|---------|---------------|-------------|
 | `daemon-substrate-test cluster up [--model <container\|host-binary\|host-daemon>] [--stay-resident]` | Bring up the kind cluster + harness workloads for the selected execution model | optional | yes |
 | `daemon-substrate-test cluster down [--model <container\|host-binary\|host-daemon>]` | Tear down the kind cluster for the selected execution model | no | yes |
+| `daemon-substrate-test cluster delete [--model <container\|host-binary\|host-daemon>]` | Thoroughly tear down the kind cluster for the selected execution model | no | yes |
 | `daemon-substrate-test cluster status [--model <container\|host-binary\|host-daemon>]` | Report current kind/node status; target lifecycle state | no | yes (read-only) |
 | `daemon-substrate-test test unit` | Run `daemon-substrate-unit` test suite | no | yes |
 | `daemon-substrate-test test integration` | Run `daemon-substrate-integration` live readiness suite; requires a running cluster | no | yes |
@@ -63,8 +66,9 @@ dependency build and release upgrade, dependency readiness waits, Pulsar bootstr
 bootstrap + seed, ConfigMap render, orchestrator Deployment, worker Deployment (Linux CPU
 cohort), edge-port discovery.
 
-`--model` defaults to `container`. The selected model determines worker placement and
-repo-local runtime paths:
+When invoked by `hostbootstrap`, the selected target supplies the execution model. Direct inner
+invocations default to `container` unless `--model` is provided. The selected model determines
+worker placement and repo-local runtime paths:
 
 | Model | Worker placement | Runtime records |
 |-------|------------------|-----------------|
@@ -72,8 +76,8 @@ repo-local runtime paths:
 | `host-binary` | in-cluster worker Deployment | `./.build/` |
 | `host-daemon` | host-native worker service | `./.build/` |
 
-`--stay-resident` is only accepted with `cluster up`; the container spec uses it so a
-successful service-container reconciliation does not exit and trigger restart-loop behavior.
+`--stay-resident` is only accepted with direct `cluster up` debugging. The `hostbootstrap`
+container lifecycle is one-shot and does not use a restart loop.
 
 Safe to re-run after any partial failure. The current runner executes the idempotent action
 plan in order; existing resources are reused or verified by the underlying tool/admin action,
@@ -83,6 +87,12 @@ and an already-existing kind cluster is reported as a successful no-change actio
 
 Reconciles cluster absence. Preserves `./.data/`, `./.build/`, the project container image
 (Linux), and host prerequisites. Removing those is outside lifecycle teardown.
+
+### `cluster delete`
+
+Runs the same absence reconciliation as `cluster down` today and is the reserved thorough
+teardown verb forwarded by `hostbootstrap cluster delete`. It remains idempotent and preserves
+`./.data/`.
 
 ### `cluster status`
 
@@ -121,7 +131,7 @@ the first failure.
 ### `check-code`
 
 Runs the same local gate as `test lint`. The project Dockerfile invokes this subcommand during
-image build so stale docs or invalid direct proto imports fail before the service container is
+image build so stale docs or invalid direct proto imports fail before the project image is
 produced.
 
 ### `service`
@@ -141,11 +151,10 @@ The lint and docs validators are configuration-file independent. The cluster, te
 `service` commands read their settings from the staged Dhall configuration via binary-owned
 preflight; they fail fast with a diagnostic if it cannot be materialized or validated.
 
-There is no `--substrate`, `--accel`, or `DAEMON_SUBSTRATE_*` flag on any
-`daemon-substrate-test` command. The acceleration target (`H.Accel.Cpu`) is selected at the
-`hostbootstrap` layer via the active spec file (`--spec`). The execution model is passed
-explicitly to inner cluster commands with `--model` by the project specs and persisted beside
-the edge-port record for the integration gate.
+There is no `--substrate` or `--accel` flag on any `daemon-substrate-test` command. The
+substrate target is selected at the `hostbootstrap` layer from the single
+`hostbootstrap.dhall`, optionally overridden with `--force-target`. The selected execution
+model is persisted beside the edge-port record for the integration gate.
 
 ## What is not a supported command
 
@@ -161,19 +170,19 @@ the edge-port record for the integration gate.
 [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap). The relevant outer commands:
 
 `hostbootstrap` is installed via `pipx` only
-(`pipx install "git+https://github.com/tuee22/hostbootstrap.git#egg=hostbootstrap"`). Each
-command accepts `--spec <file>` to select the execution model (`hostbootstrap.dhall` =
-`Container` default, `hostbootstrap-hostbinary.dhall` = `HostBinary`,
-`hostbootstrap-hostdaemon.dhall` = `HostDaemon`):
+(`pipx install "git+https://github.com/tuee22/hostbootstrap.git#egg=hostbootstrap"`). The
+single `hostbootstrap.dhall` maps Apple Silicon to `HostDaemon`, Linux CPU to `Container`, and
+Linux GPU to `HostBinary`; lifecycle commands accept `--force-target` for validation:
 
 | Command | Purpose |
 |---------|---------|
 | `hostbootstrap doctor` | Detect host; idempotently install host prereqs |
-| `hostbootstrap build` | Build the project artifact (container image or native binary) per the active spec |
-| `hostbootstrap cluster up` | Build artifact; launch per the model declared in the active spec |
-| `hostbootstrap cluster down` | Tear down (preserves `./.data/`) |
-| `hostbootstrap cluster delete` | Thorough teardown (still preserves `./.data/`) |
-| `hostbootstrap run <cmd...>` | Dispatch into the project container (`Container`) or run the host binary directly (`HostBinary` / `HostDaemon`) |
+| `hostbootstrap build [--force-target <substrate>]` | Build the selected project artifact |
+| `hostbootstrap cluster up [--force-target <substrate>]` | Build artifact; forward `daemon-substrate-test cluster up` |
+| `hostbootstrap cluster down [--force-target <substrate>]` | Tear down (preserves `./.data/`) |
+| `hostbootstrap cluster delete [--force-target <substrate>]` | Thorough teardown (still preserves `./.data/`) |
+| `hostbootstrap daemon run [--force-target <substrate>]` | Run the selected HostDaemon worker as a foreground process |
+| `hostbootstrap run [--force-target <substrate>] <cmd...>` | Dispatch to the project entrypoint for the selected target |
 
 Status reporting is owned by the inner `daemon-substrate-test cluster status` command.
 

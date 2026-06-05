@@ -4,161 +4,141 @@
 **Supersedes**: N/A
 **Referenced by**: [../README.md](../README.md), [cluster_bootstrap_runbook.md](cluster_bootstrap_runbook.md), [apple_silicon_runbook.md](apple_silicon_runbook.md), [../development/local_dev.md](../development/local_dev.md), [../engineering/hostbootstrap_integration.md](../engineering/hostbootstrap_integration.md)
 
-> **Purpose**: Linux CPU outer-container operator workflow for the `daemon-substrate-test`
-> harness — prerequisites, image build, container invocation, in-cluster worker lifecycle, and
-> recovery guidance.
+> **Purpose**: Linux CPU operator workflow for the `daemon-substrate-test` harness —
+> prerequisites, project container build, one-shot cluster handoff, in-cluster worker lifecycle,
+> and recovery guidance.
 
 ## TL;DR
 
-- Linux (`linux-cpu`) is one of the hosts the single `H.Accel.Cpu` target runs on;
-  `hostbootstrap` matches it by capability subsumption (`linux-cpu` satisfies `{ Cpu }`).
-- The default `Container` model brings the substrate up via `hostbootstrap cluster up`, which
-  builds a thin project container `FROM` the `hostbootstrap` base image (per the `Container`
-  model declared in `hostbootstrap.dhall`) and runs it long-running with `service = True`.
-- A GPU-capable host detected as `linux-gpu` satisfies `{ Cpu, Cuda }`, so the same `Cpu`
-  target runs on it unchanged. There is no GPU test cohort; the `Cuda` capability is simply
-  unused by this CPU-only repository.
-- The same `Cpu` target also runs under the `HostBinary` and `HostDaemon` models (selected
-  with `--spec hostbootstrap-hostbinary.dhall` / `--spec hostbootstrap-hostdaemon.dhall`); a
-  `Cpu` `HostDaemon` installs a systemd service on Linux.
-- The container carries the compiled `daemon-substrate-test` binary, GHC (from the base), the
-  staged Dhall, and the `kind` binary.
-- The worker daemon runs *inside* the kind cluster as a two-replica Deployment with pod
-  anti-affinity. There is no on-host worker on Linux.
-- `./.data/` is the only durable bind mount; the Docker socket is mounted so the container can
-  drive its own `kind` cluster.
+- Linux CPU selects the `LinuxCpu` entry in `hostbootstrap.dhall`, which uses the `Container`
+  model.
+- `hostbootstrap cluster up` builds a thin project image `FROM` the hostbootstrap base image and
+  runs `docker run --rm <image> cluster up` through the tini-wrapped
+  `daemon-substrate-test` entrypoint.
+- The container is not a reboot-persistent service and does not remain resident for diagnostics.
+  Run `hostbootstrap cluster up` after reboot.
+- The worker runs inside kind as a Deployment with pod anti-affinity.
+- Linux GPU hosts select the separate `LinuxGpu` entry, which uses `HostBinary`; use
+  `--force-target linux-cpu` when intentionally validating the Linux CPU container path on a GPU
+  host.
 
 ## Prerequisites
 
 Minimal pre-existing host state:
 
-- A reasonably current Linux distribution (Ubuntu 24.04 is the reference; other modern
-  glibc-based distros work)
-- `pipx` installed (`sudo apt install -y pipx && pipx ensurepath`) with `hostbootstrap`
-  installed via `pipx` (see [../development/local_dev.md](../development/local_dev.md))
-- Docker Engine with the Compose plugin
-- `docker buildx`
-- The invoking user has socket access to `/var/run/docker.sock` (`hostbootstrap doctor`
-  verifies this and reports actionable guidance if not)
+- Ubuntu 24.04 or a compatible Linux distribution
+- `pipx` with `hostbootstrap` installed via `pipx`
+- Docker Engine with socket access for the invoking user
 
-`hostbootstrap doctor` will install Docker Engine and the Compose plugin on Ubuntu via `apt`
-when missing. It does not modify your user's group membership; that step is the operator's
-responsibility.
-
-`ghc-9.12.4`, Cabal, `kubectl`, `helm`, `kind`, and `protoc` are baked into the `hostbootstrap`
-base image; no host-level Haskell toolchain is required for the `Container` model.
+`hostbootstrap doctor` verifies Docker reachability and reports actionable errors. The project
+container carries `ghc-9.12.4`, Cabal, `kubectl`, `helm`, `kind`, `protoc`, `ormolu`, `hlint`,
+and the warm Haskell store via the hostbootstrap base image.
 
 ## Bring-up
 
 ```bash
-hostbootstrap doctor          # one-time: install Docker prereqs
-hostbootstrap cluster up      # build container, start service, bring cluster up
+hostbootstrap doctor
+hostbootstrap cluster up
 ```
 
-`hostbootstrap cluster up` is a restartable reconciler. On Linux CPU it:
-
-1. Verifies / installs Docker prerequisites via `hostbootstrap doctor`
-2. Builds the thin project container via `docker/linux-substrate.Dockerfile`, which `FROM`s
-   the `hostbootstrap` base tag and bakes in `daemon-substrate-test`
-3. Runs the container long-running (`service = True`, `--restart unless-stopped`) with the
-   declared mounts: `./.data` for durable state, `/var/run/docker.sock` so the container can
-   drive `kind`
-4. The container starts `daemon-substrate-test cluster up`, attaches itself to Docker's
-   `kind` network, exports kind's internal kubeconfig, reconciles the kind cluster (Harbor,
-   Pulsar, MinIO, orchestrator, worker Deployment), and then stays resident for diagnostics
-
-The base image is pulled by default. Pass `hostbootstrap cluster up --build-base` to build the
-base locally from source.
-
-The first container build takes several minutes (project build only; the heavy toolchain is in
-the pulled base). Docker's layer cache makes subsequent builds fast.
-
-## In-cluster worker daemon
-
-Under the default `Container` model the worker runs as a Kubernetes Deployment (there is no
-host worker in this model). Under the `HostDaemon` model the same `Cpu` declaration instead
-runs the worker as a host-native systemd service, mirroring the launchd path on Apple. This
-section describes the `Container`-model in-cluster worker:
-
-- Two replicas (the kind cluster has three worker nodes)
-- `requiredDuringSchedulingIgnoredDuringExecution` pod anti-affinity on
-  `kubernetes.io/hostname`
-- Reads `worker.dhall` from the mounted `configmap-worker` at
-  `/etc/daemon-substrate/worker.dhall`
-- Subscribes to `test.batch.linux-cpu` in `Shared` mode (the two pods fan out among
-  themselves)
-
-The third worker node intentionally has no Worker pod assigned. A third replica would remain
-`Pending` because of the anti-affinity rule; the integration suite asserts this.
-
-### Driving the worker
-
-The operator does not interact with the worker process directly. To inspect:
+For forced validation:
 
 ```bash
-docker exec daemon-substrate kubectl --kubeconfig /workspace/.data/runtime/daemon-substrate.kubeconfig \
-    get pods -l app=daemon-substrate-test-worker
-docker exec daemon-substrate kubectl --kubeconfig /workspace/.data/runtime/daemon-substrate.kubeconfig \
-    logs -l app=daemon-substrate-test-worker --tail=100
+hostbootstrap cluster up --force-target linux-cpu
+```
+
+On Linux CPU, `cluster up`:
+
+1. Builds `daemon-substrate-test:linux-cpu-<arch>` from `docker/Dockerfile`.
+2. Runs the image as a one-shot container with `./.data` and `/var/run/docker.sock` mounted.
+3. Forwards `cluster up` to the project entrypoint.
+4. Lets the inner reconciler create kind, deploy Harbor / Pulsar / MinIO, roll out the
+   orchestrator, and roll out the in-cluster worker Deployment.
+
+The first build can take several minutes. Docker layer cache makes subsequent builds faster.
+
+## In-cluster Worker
+
+Under the Linux CPU `Container` target the worker runs as a Kubernetes Deployment:
+
+- two replicas
+- required pod anti-affinity on `kubernetes.io/hostname`
+- `worker.dhall` mounted from `configmap-worker`
+- subscription to `test.batch.linux-cpu` in `Shared` mode
+
+The operator normally uses the harness status/readiness commands rather than attaching to a
+resident container:
+
+```bash
+hostbootstrap run cluster status
+daemon-substrate-test test integration
+```
+
+## Linux GPU Target
+
+A GPU-capable Linux host normally selects `LinuxGpu`, not `LinuxCpu`. In this repository the
+mock engine performs no CUDA work; the `LinuxGpu` target validates the HostBinary lifecycle and
+CUDA-flavored hostbootstrap base selection. To exercise it:
+
+```bash
+hostbootstrap cluster up --force-target linux-gpu
+hostbootstrap cluster down --force-target linux-gpu
 ```
 
 ## Teardown
 
 ```bash
-hostbootstrap cluster down     # tear down; preserves ./.data/
-hostbootstrap cluster delete   # thorough teardown; still preserves ./.data/
+hostbootstrap cluster down
+hostbootstrap cluster delete
 ```
 
-Preserves:
+Preserved state:
 
-- `./.data/` (durable cluster state) — `hostbootstrap` never deletes this
-- the project container image (`cluster delete` may rebuild it on next `up`)
+- `./.data/` durable cluster state
+- local Docker layer cache
 - installed Docker / OS prerequisites
 
-## Recovery from common failures
+`cluster delete` is the thorough inner teardown path but still preserves `./.data/`.
+
+## Reboot Policy
+
+`hostbootstrap` does not create restart-after-reboot Docker containers. After reboot:
+
+```bash
+hostbootstrap cluster up
+```
+
+Operators who want boot-time automation can create their own systemd unit outside
+`hostbootstrap`.
+
+## Recovery From Common Failures
 
 ### Docker socket access denied
 
-`hostbootstrap doctor` verifies socket access early and reports:
-
-```
-operator '<user>' does not have socket access to /var/run/docker.sock
-```
-
-Resolution is operator-specific (add user to `docker` group, log out and back in, etc.).
-`hostbootstrap doctor` does not modify group membership.
+`hostbootstrap doctor` verifies socket access early and reports the failing Docker condition.
+Resolution is operator-specific, such as fixing Docker group membership and starting a new login
+session.
 
 ### Project image build failure
 
-If the build fails partway through, Docker preserves the successful layers. Re-run
-`hostbootstrap cluster up` to resume. If a base-image upstream change broke the build,
-`hostbootstrap cluster up --build-base` forces a base rebuild before the project build.
-
-### Kind cluster unreachable from project container
-
-The container joins Docker's private `kind` network during `cluster up` and `cluster status`
-before using the repo-local kubeconfig. If Docker reports the container is not attached to
-that network, rerun `daemon-substrate-test cluster up` from inside the service container or
-restart the outer service with `hostbootstrap cluster down && hostbootstrap cluster up`.
+Re-run `hostbootstrap cluster up`; Docker preserves successful layers. If the base image needs
+to be rebuilt locally, use `hostbootstrap cluster up --build-base --base-context ~/hostbootstrap`.
 
 ### Worker replicas stuck `Pending`
 
-Either the kind cluster has fewer than two worker nodes (it should have three), or the
-anti-affinity rule is firing because both nodes already host a Worker pod. Inspect:
+The Linux CPU kind topology must have enough worker nodes for the anti-affinity rule. Run:
 
 ```bash
-docker exec daemon-substrate kubectl --kubeconfig /workspace/.data/runtime/daemon-substrate.kubeconfig \
-    describe nodes
+hostbootstrap run cluster status
 ```
 
-A third Worker replica is *expected* to remain `Pending`; the harness asserts that explicitly.
-Only investigate if fewer than two replicas are `Running`.
+If topology is wrong, run `hostbootstrap cluster down` followed by `hostbootstrap cluster up`.
 
-## What this runbook does not cover
+## What This Runbook Does Not Cover
 
-- GPU workloads — the test harness has no CUDA cohort.
-- Real ML model workloads — see `infernix` and `jitML` for those.
-- Multi-host Linux deployments — the harness is single-host.
+- Real GPU workloads; those are consumer-project obligations.
+- Real ML model workloads; see `infernix` and `jitML`.
+- Multi-host Linux deployments; the harness is single-host.
 
 ## Cross-references
 

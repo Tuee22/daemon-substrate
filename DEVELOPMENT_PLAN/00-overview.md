@@ -16,8 +16,9 @@ typed `hostbootstrap.dhall` at the repository root and inherits GHC 9.12 + Cabal
 + `protoc` + `ormolu` + `hlint` + a warm Haskell store from the base image. The phases below
 focus on the Haskell library, the in-cluster reconcilers, and the `hostbootstrap.dhall` plus
 thin project Dockerfile that wire the two layers together. What `daemon-substrate` explicitly
-does **not** implement: substrate detection, host-prereq install, container lifecycle,
-LaunchDaemon / systemd unit creation, multi-language toolchain installation. See
+does **not** implement: substrate detection, host-prereq install, restart-after-reboot
+container lifecycle, launchd/systemd unit creation or mutation, multi-language toolchain
+installation. See
 [`../documents/engineering/hostbootstrap_integration.md`](../documents/engineering/hostbootstrap_integration.md).
 
 ## The buildout
@@ -117,15 +118,15 @@ Depends on Phase 5 because the chart needs working daemon binaries to deploy.
 
 ### Phase 7 — hostbootstrap.dhall and thin project Dockerfile
 
-Land `hostbootstrap.dhall` at the repository root as the default `Container` spec with a
-single `H.Accel.Cpu` target, plus `hostbootstrap-hostbinary.dhall`,
-`hostbootstrap-hostdaemon.dhall`, and the thin `docker/linux-substrate.Dockerfile`
-(`FROM ${BASE_IMAGE}` plus the project's own build steps and `check-code` gate). After this
-phase, an operator can run `hostbootstrap cluster up` under the default container spec or
-select a host-native model with `--spec`. Substrate detection, host-prereq install,
-container / daemon lifecycle, LaunchDaemon / systemd installation, and base-image selection
-are all handled by `hostbootstrap`; this phase only ships the project-side config and
-Dockerfile.
+Land `hostbootstrap.dhall` at the repository root as the single substrate-keyed config:
+`AppleSilicon` uses `HostDaemon`, `LinuxCpu` uses `Container`, and `LinuxGpu` uses
+`HostBinary`. Land the thin `docker/Dockerfile` (`FROM ${BASE_IMAGE}` plus
+the project's own build steps, the `check-code` gate, and a tini-wrapped entrypoint with no
+default `CMD`). After this phase, an operator can run `hostbootstrap cluster up` for the
+detected host or use `--force-target` for validation. Substrate detection, host-prereq checks,
+artifact build, foreground `hostbootstrap daemon run` invocation for HostDaemon targets, and
+base-image selection are all handled by `hostbootstrap`; this phase only ships the project-side
+config and Dockerfile.
 
 Depends on Phase 6 because the inner reconcilers (kind / Harbor / Pulsar / MinIO /
 orchestrator / worker) must exist before the outer entry can deliver a `Ready` cluster.
@@ -145,9 +146,11 @@ Depends on Phase 7 because integration tests need the bootstrap-driven cluster b
 
 ## Cohort obligations
 
-Every phase that touches the test harness (Phase 6 onward) carries both cohort obligations:
-Apple Silicon and Linux CPU. A phase cannot move to `Done` until both cohorts have validated
-the same phase state. See [development_plan_standards.md § Q](development_plan_standards.md).
+Every phase that touches the test harness (Phase 6 onward) carries the required hostbootstrap
+target obligations: Apple Silicon, Linux CPU, and Linux GPU. `--force-target` can complete the
+target matrix on one machine for local validation, but hardware-specific closure evidence must
+be recorded when a phase depends on it. See
+[development_plan_standards.md § Q](development_plan_standards.md).
 
 ## What is intentionally not a phase
 
@@ -158,8 +161,8 @@ the same phase state. See [development_plan_standards.md § Q](development_plan_
   release ceremony.
 - A "consumer migration" phase. Wiring `infernix` and `jitML` to consume the library is the
   consumers' work, not the substrate's.
-- A GPU cohort. The mock engine performs no accelerator work; a GPU cohort would add cost
-  without coverage.
+- Consumer GPU correctness. The mock engine performs no accelerator work; the Linux GPU target
+  validates hostbootstrap lifecycle shape, not model correctness.
 - A "bootstrap scripting" phase. Substrate-specific bootstrap shell scripts, custom Compose
   files, and multi-language Dockerfile layers are owned by
   [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap), not by this repository.
