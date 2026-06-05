@@ -24,7 +24,12 @@
 Phase 1 has landed the buildable package scaffold:
 
 - `daemon-substrate.cabal` defines the library and all four test-suite stanzas.
-- `cabal.project` pins `with-compiler: ghc-9.12` and carries the `allow-newer` carve-out.
+- `cabal.project` pins `with-compiler: ghc-9.12.4` (exact) and carries the `allow-newer`
+  carve-out plus the warm-store-compatible `tests`, `benchmarks`, `shared`, and
+  `optimization: 2` profile. `cabal.project.container` imports the root project and
+  `/opt/basecontainer/haskell-deps/cabal.project.freeze`; the Dockerfile uses that container
+  project file, while native `HostBinary` / `HostDaemon` builds use the root project and do
+  not import the warm store.
 - `src/Daemon/` contains the Phase 1 placeholder module tree plus the Phase 2 typeclass
   surfaces for Pulsar, MinIO, Harbor, Kubectl, their filesystem test backends, concrete
   non-Pulsar subprocess backends, the in-process Pulsar admin HTTP client, and the
@@ -101,7 +106,8 @@ and the `daemon-substrate-integration` live readiness gate are validated.
 ```
 daemon-substrate/
 ├── daemon-substrate.cabal
-├── cabal.project          # GHC pin (9.12, matching hostbootstrap base), allow-newer carve-outs
+├── cabal.project          # GHC pin (ghc-9.12.4, matching hostbootstrap base), allow-newer carve-outs, warm-store-compatible profile
+├── cabal.project.container # container-only import of the hostbootstrap warm-store freeze
 ├── src/                   # library sources
 │   └── Daemon/
 │       ├── Sub.hs              # typed Subprocess + runStreaming (shell-out seam for MinIO/Harbor/Kubectl/SubprocessEngine)
@@ -299,7 +305,7 @@ test-suite daemon-substrate-haskell-style
 | `daemon-substrate-unit` | pure logic: protobuf encode / decode, `WorkflowOwner` fold, `BootConfig` / `LiveConfig` / `LifecyclePolicy` decoders, cache eviction policies, `Store` semantics over `FilesystemMinIO`, `Consumer` dedup over `FilesystemPulsar`, reconciler tick over filesystem backends |
 | `daemon-substrate-lifecycle` | daemon spawned as a real process; SIGHUP / SIGTERM / SIGINT exercised; `/readyz` polled; `LiveConfig` reload validated. No cluster needed. |
 | `daemon-substrate-integration` | live readiness suite; requires a real kind cluster brought up by `hostbootstrap cluster up` (delegating inward to `daemon-substrate-test cluster up`) and checks node topology, dependency rollouts, daemon workload readiness, retained PVCs, and edge-port state |
-| `daemon-substrate-haskell-style` | `ormolu` and `hlint` gates run against `src/`, plus the doc validator |
+| `daemon-substrate-haskell-style` | governed-doc validator plus direct `Daemon.Proto.*` import-boundary gate |
 
 The integration suite is the one that depends on a running cluster. It is invoked through
 `daemon-substrate-test test integration`; the command delegates directly to
@@ -322,13 +328,19 @@ incremental rebuild times suffer.
 
 ## GHC pin and `cabal.project`
 
-`cabal.project` pins GHC to `9.12` to match the [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap)
-base image (`docker.io/tuee22/hostbootstrap:basecontainer-cpu-*`) and the GHC consumed by
-`infernix` and `jitML`. The `allow-newer: *:base, *:template-haskell` carve-out is needed for
-Dhall's transitive CBOR dependencies (same posture as the consumer projects).
+`cabal.project` pins GHC to exactly `ghc-9.12.4` to match the
+[`hostbootstrap`](https://github.com/Tuee22/hostbootstrap) base image
+(`docker.io/tuee22/hostbootstrap:basecontainer-cpu-*`) and the GHC consumed by `infernix` and
+`jitML`. The `allow-newer: *:base, *:template-haskell` carve-out is needed for Dhall's
+transitive CBOR dependencies (same posture as the consumer projects).
 
-The base image ships a warm Haskell store with the common build dependencies pre-resolved, so
-the project container build only compiles `daemon-substrate`'s own modules. See
+The base image ships a warm Haskell store with the common build dependencies pre-resolved.
+`cabal.project.container` imports both the root `cabal.project` and
+`/opt/basecontainer/haskell-deps/cabal.project.freeze`; `docker/linux-substrate.Dockerfile`
+uses that project file for container builds only, so the project container build only compiles
+`daemon-substrate`'s own modules when the base cache is warm. Native `HostBinary` /
+`HostDaemon` builds run against the host's own ghcup-provided `ghc-9.12.4` and do **not**
+import the warm-store freeze. See
 [hostbootstrap_integration.md](hostbootstrap_integration.md) for the integration shape.
 
 ## Native Pulsar client dependencies

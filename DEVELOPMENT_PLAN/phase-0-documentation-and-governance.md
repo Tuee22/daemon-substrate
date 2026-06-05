@@ -12,8 +12,8 @@
 
 **Status**: Done
 **Implementation**: documentation only
-**Remaining work**: none. Sprint 0.5 remains intentionally deferred to Phase 8 Sprint 8.5 and
-does not block Phase 0 closure.
+**Remaining work**: none. Sprint 0.5 is closed through the Phase 8 Sprint 8.5
+`daemon-substrate-haskell-style` implementation.
 
 ## Phase Objective
 
@@ -26,8 +26,7 @@ Make every other phase possible. By the time Phase 0 closes, the repository must
   development, operations, and reference surface
 - a populated `DEVELOPMENT_PLAN/` tree with the phase list, overview, component inventory, and
   cleanup ledger
-- a doc validator (eventually) that mechanically enforces the metadata and link rules the
-  standards require
+- a doc validator that mechanically enforces the metadata and link rules the standards require
 
 The phase does not produce any Haskell, chart, or bootstrap code; that work belongs to later
 phases.
@@ -81,8 +80,8 @@ Documents" of `documents/documentation_standards.md` requires.
 
 #### Validation
 
-Each file passes the standards' header rules on visual inspection. (Mechanical validation
-deferred to Sprint 0.5.)
+Each file passes the standards' header rules on visual inspection and through the Sprint 0.5
+style gate.
 
 #### Remaining Work
 
@@ -168,31 +167,32 @@ Every phase file carries `Status`, `Phase Status`, `Phase Objective`, `Sprints`,
 
 (none)
 
-### Sprint 0.5: Doc validator [Deferred — owned by Phase 8 Sprint 8.5]
+### Sprint 0.5: Doc validator [Done — implemented by Phase 8 Sprint 8.5]
 
-**Status**: Deferred
-**Blocked by**: Phase 8 Sprint 8.5 (the validator implementation lands as part of the
-test-lint gate; Phase 0 closure does not depend on it)
+**Status**: Done
+**Implementation**: `test/haskell-style/Main.hs`, `daemon-substrate.cabal`
 **Docs to update**: `documents/documentation_standards.md` (Validation section), this file
 
 #### Objective
 
-The doc validator is forward-referenced from
-`documents/documentation_standards.md § Validation` and from the `Documentation Requirements`
-sections of later phase files. Its implementation lives in
-[`phase-8-test-harness-integration.md` Sprint 8.5](phase-8-test-harness-integration.md);
-see that sprint for deliverables, validation, and remaining-work tracking.
+Close the forward-referenced documentation validator obligation by wiring the mechanical checks
+into the Phase 8 style gate.
 
-This sprint exists only to document the obligation; it does not own the implementation.
-Phase 0 can close (Status: `Done`) once Sprints 0.1 – 0.4 and 0.6 close, even if Sprint 0.5
-is still `Deferred`. When Sprint 8.5 lands the validator, the
-`documents/documentation_standards.md` Validation section transitions from forward-looking to
-current-state declarative as a side effect, and this sprint's status becomes `Done` via
-reference to that closure.
+#### Deliverables
 
-**Closure coupling**: the change set that flips Sprint 8.5 to `Done` must in the same change
-set flip this sprint (0.5) to `Done` and update Phase 0's overall status accordingly. Do not
-merge the Phase 8 Sprint 8.5 change set without including the Phase 0 status updates.
+- `daemon-substrate-haskell-style` validates governed metadata blocks, required broad-doc
+  headings, relative Markdown links, root README links, and phase-file
+  `## Documentation Requirements` sections
+- the same suite enforces the direct `Daemon.Proto.*` import boundary
+- `documents/documentation_standards.md` describes the validator as current-state behavior
+
+#### Validation
+
+- `cabal test daemon-substrate-haskell-style`
+
+#### Remaining Work
+
+(none)
 
 ### Sprint 0.6: hostbootstrap re-baseline [Done]
 

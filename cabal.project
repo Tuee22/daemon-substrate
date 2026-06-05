@@ -1,7 +1,13 @@
 packages:
   .
 
-with-compiler: ghc-9.12
+with-compiler: ghc-9.12.4
+
+tests: True
+benchmarks: True
+shared: True
+
+optimization: 2
 
 allow-newer:
   *:base,

@@ -148,6 +148,25 @@ Consumer-owned payload schemas live in the consumer's own repository, addressed 
 `payload_type` URL prefix routed by `Daemon.Consumer.HandlerRouter`. Substrate does not
 mediate the schema; it routes by URL.
 
+## Reference scaffolding: how the split serves the three workflow archetypes
+
+The Pulsar/MinIO split is the scaffolding `infernix` and `jitML` build on, and it carries the
+three ML workflow archetypes the substrate is the reference for:
+
+- **(a) Continuous batched inference** (≈ `infernix`) — requests and results ride Pulsar;
+  model weights and large media inputs/outputs ride MinIO as `ObjectRef`; conversation /
+  sequence state stays on Pulsar.
+- **(b) Finite SL / offline-RL training jobs** (≈ `jitML`) — training commands and per-step
+  events ride Pulsar; datasets and checkpoints ride MinIO. The run terminates and exports its
+  final checkpoint to MinIO.
+- **(c) Continuous online RL** — new weights are written to MinIO and their availability is
+  **announced on the Pulsar inference topics**; training and inference task messages are
+  distinct on Pulsar and route by `payload_type` URL prefix to the same or separate stateless
+  engines. Pulsar carries the announcement and the routing; MinIO carries the weights.
+
+In every archetype Pulsar stays the workflow SSoT and MinIO stays the static-blob SSoT; the
+archetype only changes which topics and buckets the consumer declares.
+
 ## Anti-patterns
 
 - **Putting workflow state in MinIO.** Workflow events go to Pulsar. MinIO doesn't carry "the

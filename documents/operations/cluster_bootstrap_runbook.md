@@ -10,14 +10,18 @@
 
 ## TL;DR
 
-- `hostbootstrap cluster up` is the outer entry on both cohorts. It builds the project
-  artifact (binary on Apple, container on Linux) and launches the appropriate model.
+- `hostbootstrap cluster up` is the outer entry. It builds the project artifact and launches
+  the model declared in the active spec (`--spec`; `hostbootstrap.dhall` = `Container` default,
+  `hostbootstrap-hostbinary.dhall` = `HostBinary`, `hostbootstrap-hostdaemon.dhall` =
+  `HostDaemon`). The single `H.Accel.Cpu` target runs on every host.
 - `daemon-substrate-test cluster up` is the inner reconciler that reconciles the kind cluster
-  + Harbor / Pulsar / MinIO / orchestrator topology. It runs inside the project container on
-  Linux and on the host on Apple.
+  + Harbor / Pulsar / MinIO / orchestrator topology. It runs inside the project container under
+  the `Container` model and on the host under the `HostBinary` / `HostDaemon` models.
 - Both commands are idempotent. Safe to re-run.
 - `cluster down` (outer or inner) preserves `./.data/` and `./.build/` so the next `up` is
-  fast.
+  fast; `hostbootstrap cluster delete` does a thorough teardown but still preserves `./.data/`.
+- `hostbootstrap` is installed via `pipx` only (`pipx install
+  "git+https://github.com/tuee22/hostbootstrap.git#egg=hostbootstrap"`).
 - Long-running phases (Docker image build, dependency rollout) are expected to refresh a
   heartbeat in the target lifecycle reporter. Until that lands, streamed action progress,
   subprocess output, and action completion are the current progress indicators.
@@ -33,9 +37,9 @@
 See [../engineering/hostbootstrap_integration.md](../engineering/hostbootstrap_integration.md)
 for the full boundary statement.
 
-Current implementation note: Phase 6 has landed the `Daemon.Cluster.*` action-plan modules,
+Current implementation note: Phase 6 landed the `Daemon.Cluster.*` action-plan modules,
 the Helm chart render surface, and the packaged harness Dhall configs. Phase 8 Sprint 8.6
-adds concrete `kind`, `kubectl`, `helm`, Docker image build, kind image-load, Kubernetes
+implemented concrete `kind`, `kubectl`, `helm`, Docker image build, kind image-load, Kubernetes
 apply / rollout wait, Pulsar admin, MinIO admin, and edge-port execution. The dependency
 charts are deployable local Harbor / Pulsar / MinIO StatefulSets with PVC-backed state, and
 the service command runs live worker / orchestrator loops. Apple edge-port forwarding,
@@ -47,19 +51,19 @@ live readiness gate are validated.
 
 ## Bring-up
 
-Apple Silicon (host-native worker via LaunchDaemon; in-cluster reconcilers on host):
-
-```bash
-hostbootstrap cluster up                           # outer: build binary, install LaunchDaemon
-./.build/daemon-substrate-test cluster up          # inner: reconcile kind cluster
-```
-
-Linux CPU (outer container; in-cluster reconcilers inside the container):
+`Container` model (default; outer container; in-cluster reconcilers inside the container):
 
 ```bash
 hostbootstrap cluster up                           # outer: build container, run service
 # inner runs automatically inside the container
-hostbootstrap run daemon-substrate-test cluster up # invoke inner directly if needed
+hostbootstrap run cluster up --model container     # invoke inner directly if needed
+```
+
+`HostDaemon` model (host-native worker via launchd/systemd; in-cluster reconcilers on host):
+
+```bash
+hostbootstrap cluster up --spec hostbootstrap-hostdaemon.dhall  # outer: build binary, install managed service
+./.build/daemon-substrate-test cluster up --model host-daemon   # inner: reconcile kind cluster
 ```
 
 `cluster up` reconciles, in order:
@@ -124,8 +128,8 @@ read-only kind / node status command; lifecycle-detail reporting is still target
 ## Status
 
 ```bash
-./.build/daemon-substrate-test cluster status        # Apple
-hostbootstrap run daemon-substrate-test cluster status   # Linux
+./.build/daemon-substrate-test cluster status --model host-daemon # host-daemon
+hostbootstrap run cluster status --model container                 # container
 ```
 
 Reports the known kind clusters and node readiness through the repo-local kubeconfig. The
@@ -165,8 +169,8 @@ Typical bring-up durations:
 
 ```bash
 hostbootstrap cluster down                           # both cohorts (outer)
-./.build/daemon-substrate-test cluster down          # Apple, inner only
-hostbootstrap run daemon-substrate-test cluster down # Linux, inner only
+./.build/daemon-substrate-test cluster down --model host-daemon # host-daemon, inner only
+hostbootstrap run cluster down --model container                 # container, inner only
 ```
 
 Tears down the Kind cluster and all in-cluster resources. Preserves:
@@ -202,16 +206,16 @@ the same base port if it is still available.
 
 The repo-local kubeconfig is the only authoritative handle to the harness cluster:
 
-| Substrate | Path |
-|-----------|------|
-| Apple Silicon | `./.build/daemon-substrate.kubeconfig` |
-| Linux CPU | `./.data/runtime/daemon-substrate.kubeconfig` |
+| Execution model | Path |
+|-----------------|------|
+| `host-binary` / `host-daemon` | `./.build/daemon-substrate.kubeconfig` |
+| `container` | `./.data/runtime/daemon-substrate.kubeconfig` |
 
 Neither path mutates the operator's `~/.kube/config`. To use `kubectl` directly:
 
 ```bash
 KUBECONFIG=./.build/daemon-substrate.kubeconfig kubectl get pods -A   # Apple
-hostbootstrap run kubectl --kubeconfig /workspace/.data/runtime/daemon-substrate.kubeconfig get pods -A   # Linux
+docker exec daemon-substrate kubectl --kubeconfig /workspace/.data/runtime/daemon-substrate.kubeconfig get pods -A   # container
 ```
 
 ## Cross-references

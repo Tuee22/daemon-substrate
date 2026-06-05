@@ -1,5 +1,6 @@
 module Daemon.Test.CLI.Types where
 
+import Daemon.Test.Matrix
 import Data.Text (Text)
 import qualified Data.Text as Text
 
@@ -8,12 +9,19 @@ data CliCommand
   | CliCluster !ClusterCommand
   | CliTest !HarnessTestCommand
   | CliService !ServiceCommand
+  | CliCheckCode
   deriving stock (Eq, Show)
 
 data ClusterCommand
-  = ClusterUp
-  | ClusterDown
-  | ClusterStatus
+  = ClusterUp !ClusterOptions
+  | ClusterDown !ClusterOptions
+  | ClusterStatus !ClusterOptions
+  deriving stock (Eq, Show)
+
+data ClusterOptions = ClusterOptions
+  { clusterOptionsModel :: !HarnessExecutionModel,
+    clusterOptionsStayResident :: !Bool
+  }
   deriving stock (Eq, Show)
 
 data HarnessTestCommand
@@ -44,13 +52,35 @@ parseCliCommand ["-h"] = Right CliHelp
 parseCliCommand ("cluster" : rest) = CliCluster <$> parseClusterCommand rest
 parseCliCommand ("test" : rest) = CliTest <$> parseHarnessTestCommand rest
 parseCliCommand ("service" : rest) = CliService <$> parseServiceCommand rest
+parseCliCommand ["check-code"] = Right CliCheckCode
 parseCliCommand _ = Left renderCliHelp
 
 parseClusterCommand :: [String] -> Either Text ClusterCommand
-parseClusterCommand ["up"] = Right ClusterUp
-parseClusterCommand ["down"] = Right ClusterDown
-parseClusterCommand ["status"] = Right ClusterStatus
+parseClusterCommand ("up" : rest) = ClusterUp <$> parseClusterOptions True rest
+parseClusterCommand ("down" : rest) = ClusterDown <$> parseClusterOptions False rest
+parseClusterCommand ("status" : rest) = ClusterStatus <$> parseClusterOptions False rest
 parseClusterCommand _ = Left renderCliHelp
+
+parseClusterOptions :: Bool -> [String] -> Either Text ClusterOptions
+parseClusterOptions allowStayResident =
+  go defaultClusterOptions
+  where
+    go options [] = Right options
+    go options ("--model" : value : rest) =
+      case parseExecutionModel (Text.pack value) of
+        Just model -> go options{clusterOptionsModel = model} rest
+        Nothing -> Left "cluster --model must be container, host-binary, or host-daemon"
+    go options ("--stay-resident" : rest)
+      | allowStayResident = go options{clusterOptionsStayResident = True} rest
+      | otherwise = Left "--stay-resident is only supported by cluster up"
+    go _ _ = Left renderCliHelp
+
+defaultClusterOptions :: ClusterOptions
+defaultClusterOptions =
+  ClusterOptions
+    { clusterOptionsModel = ExecutionContainer,
+      clusterOptionsStayResident = False
+    }
 
 parseHarnessTestCommand :: [String] -> Either Text HarnessTestCommand
 parseHarnessTestCommand ["unit"] = Right TestUnit
@@ -90,14 +120,14 @@ renderCliHelp =
     [ "daemon-substrate-test",
       "",
       "Commands:",
-      "  cluster up",
-      "  cluster down",
-      "  cluster status",
+      "  cluster up [--model <container|host-binary|host-daemon>] [--stay-resident]",
+      "  cluster down [--model <container|host-binary|host-daemon>]",
+      "  cluster status [--model <container|host-binary|host-daemon>]",
       "  test unit",
       "  test lifecycle",
       "  test integration",
       "  test lint",
       "  test all",
-      "  service --role <worker|orchestrator> --config <path> [--live-config <path>] [--lifecycle-policy <path>]"
+      "  service --role <worker|orchestrator> --config <path> [--live-config <path>] [--lifecycle-policy <path>]",
+      "  check-code"
     ]
-

@@ -10,11 +10,14 @@
 
 ## TL;DR
 
-- Apple Silicon is the supported host-native cohort. The `daemon-substrate-test` binary builds
-  and runs directly on macOS arm64; no Docker container layer for the worker.
-- The substrate is brought up by `hostbootstrap cluster up`, which builds the binary via
-  `cabal install` and installs a system-scope LaunchDaemon (per the `HostDaemon` model
-  declared in `hostbootstrap.dhall`).
+- Apple Silicon (`apple-silicon`) is one of the hosts the single `H.Accel.Cpu` target runs
+  on; `hostbootstrap` matches it by capability subsumption (`apple-silicon` satisfies
+  `{ Cpu, Metal }`). In the `HostDaemon` and `HostBinary` models the `daemon-substrate-test`
+  binary builds and runs directly on macOS arm64; no Docker container layer for the worker.
+- Under the `HostDaemon` model (selected with
+  `hostbootstrap cluster up --spec hostbootstrap-hostdaemon.dhall`) `hostbootstrap` builds the
+  binary via `cabal install` and installs a managed launchd service. The same `Cpu`
+  `HostDaemon` declaration installs a systemd service on Linux.
 - The kind cluster (Harbor, Pulsar, MinIO, orchestrator) runs inside Colima.
 - The worker daemon runs as `./.build/daemon-substrate-test service --role worker` *outside*
   the cluster on the host, under the LaunchDaemon `hostbootstrap` installed.
@@ -26,30 +29,32 @@
 Minimal pre-existing host state:
 
 - macOS on Apple Silicon (arm64)
-- Python 3.12 (system Python is fine) with `hostbootstrap` installed (see
-  [../development/local_dev.md](../development/local_dev.md))
+- `pipx` installed (`brew install pipx && pipx ensurepath`) with `hostbootstrap` installed via
+  `pipx` (see [../development/local_dev.md](../development/local_dev.md))
 - Homebrew installed (`hostbootstrap doctor` will refuse to run without it)
-- `ghcup` installed and on `$PATH`
+- `ghcup` installed
 
 `hostbootstrap doctor` installs / verifies:
 
-- GHC 9.12 via ghcup
+- `ghc-9.12.4` via ghcup
 - Cabal (paired with the GHC pin) via ghcup
 - `protoc` via Homebrew
 - Colima via Homebrew (the only supported Docker environment on Apple Silicon)
 - Kind, `kubectl`, `helm` via Homebrew
 
-These match the prereqs the `HostDaemon` model's `H.HostReqs` declares for this repository.
+These match the prereqs the `HostDaemon` model's `H.HostReqs` (just `{ ghc }`) declares for
+this repository.
 
 ## Bring-up
 
 ```bash
-hostbootstrap doctor              # one-time: install prereqs
-hostbootstrap cluster up          # build binary, install LaunchDaemon
-./.build/daemon-substrate-test cluster up  # inner kind-cluster reconciler
+hostbootstrap doctor                                              # one-time: install prereqs
+hostbootstrap cluster up --spec hostbootstrap-hostdaemon.dhall    # build binary, install launchd service
+./.build/daemon-substrate-test cluster up                        # inner kind-cluster reconciler
 ```
 
-`hostbootstrap cluster up` is a restartable reconciler. On Apple Silicon it:
+`hostbootstrap cluster up` is a restartable reconciler. Under the `HostDaemon` model on Apple
+Silicon it:
 
 1. Builds `./.build/daemon-substrate-test` from source via the `cabal install` command
    declared in `hostbootstrap.dhall`'s `H.Build`
@@ -64,7 +69,8 @@ hostbootstrap cluster up          # build binary, install LaunchDaemon
    validated.
 
 Subsequent bring-ups skip prerequisite verification when the active checkpoints match. The
-LaunchDaemon starts the worker before any user logs in — supporting headless remote SSH.
+launchd service starts the worker before any user logs in — supporting headless remote SSH.
+The same `Cpu` `HostDaemon` declaration installs a systemd unit on Linux.
 
 To inspect:
 

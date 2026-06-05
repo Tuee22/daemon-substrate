@@ -14,11 +14,20 @@
 - `daemon-substrate-test test lifecycle` — daemon-as-process, signals + readiness probes, no
   cluster.
 - `daemon-substrate-test test integration` — end-to-end against a real kind cluster.
-- `daemon-substrate-test test lint` — `ormolu`, `hlint`, doc and proto lints.
+- `daemon-substrate-test test lint` — governed-doc validation plus the direct
+  `Daemon.Proto.*` import boundary.
 - `daemon-substrate-test test all` — runs the above in order.
-- Two cohorts: Apple Silicon, Linux CPU. Both must close for a phase to move to `Done`.
-- On both cohorts the operator entrypoint is `hostbootstrap cluster up`; the
-  `daemon-substrate-test test ...` commands run inside the resulting environment.
+- One `H.Accel.Cpu` target runs on every host (`apple-silicon`, `linux-cpu`, `linux-gpu`),
+  matched by capability subsumption. The operator entrypoint is `hostbootstrap cluster up`
+  (`hostbootstrap` installed via `pipx`); the `daemon-substrate-test test ...` commands run
+  inside the resulting environment.
+- **Coverage model** is the full **3×3 matrix**: each of the three execution models
+  (`Container`, `HostBinary`, `HostDaemon`) exercising each of three ML workflow archetypes —
+  (a) continuous batched inference (≈ `infernix`), (b) finite SL / offline-RL training jobs
+  (≈ `jitML`), and (c) continuous online RL (MinIO weight updates announced on Pulsar
+  inference topics, with distinct training-vs-inference task messages routable to
+  same-or-separate stateless engines). `Daemon.Test.Matrix` records the matrix and unit tests
+  assert that every model/archetype pair is present.
 
 Current implementation note: Phase 8 implements the executable parser, help surface, Cabal
 test delegation, four test stanzas, live cluster runner, deployable dependency charts,
@@ -26,9 +35,11 @@ PVC-backed kind state, live service loops, and the integration readiness gate. A
 live validation covers cluster bring-up, PVC-backed state preservation, native Pulsar
 Failover leadership for the reconciler, live Pulsar/MinIO admin interactions, host-worker
 edge-port handoff, and a live request -> orchestrator -> host worker -> response smoke
-handoff. Linux live validation covers hostbootstrap container bring-up, two preserved-state
-kind cycles, retained PV reattachment, worker/orchestrator readiness, edge-port
-preservation, and the `daemon-substrate-integration` live readiness gate. Rows 1-36 below
+handoff. Phase 8 Sprint 8.7 adds the explicit execution-model marker used by the integration
+gate and the 3×3 matrix audit map. Linux live validation covers hostbootstrap container
+bring-up, two preserved-state kind cycles, retained PV reattachment, worker/orchestrator
+readiness, edge-port preservation, and the `daemon-substrate-integration` live readiness gate.
+Rows 1-36 below
 are the workflow audit map tying automated unit coverage, live readiness checks, and
 manual live-smoke evidence to consumer-representative behavior; they are not each a
 separate integration-test case today.
@@ -91,7 +102,7 @@ architecture.
 | 33 | `Daemon.WorkflowState` rehydration: kill a worker mid-stream; new replica reads back the Pulsar log on `AcquireClients` and reconstructs the in-memory fold to byte-identical state before resuming `Serve` | `runWorker` + `Daemon.WorkflowState.rehydrate` semantics (distinct from row 17's Pulsar-cursor resumption) | yes (training optimizer state, AlphaZero MCTS tree) | yes (durable conversation context across coordinator restarts) |
 | 34 | Producer-side dedup: the same payload published twice under the same idempotency key produces exactly one consumer delivery | `HasPulsar.publish` idempotent-producer wiring (distinct from row 8's consumer-side dedup cache) | yes (training-run submission) | yes (`client_idempotency_key` on `InferenceRequest`) |
 | 35 | Engine forced failure: `MockRequest.force_failure = true` → mock engine returns `EngineNativeError` → worker publishes `WorkerResult { FailurePayload }` → orchestrator routes the failure to the caller without retry | `HasEngine` terminal-failure semantics + `FailurePayload` propagation (distinct from row 9's neg-ack retry path) | yes (Failed / Cancelled status fields) | yes (Completed / Failed / Cancelled status on `InferenceResult`) |
-| 36 | Apple-Silicon host-daemon ↔ in-cluster Pulsar: a host LaunchDaemon process subscribes to `test.batch.apple-silicon` via the edge port, publishes to `test.result`, survives `cluster down` / `cluster up` | host-daemon path through `HasPulsar` against the in-cluster broker | yes (jitML `ForwardToHost` Apple inference RPC) | yes (infernix Apple host daemon on `inference.batch.apple-silicon.host`) |
+| 36 | HostDaemon worker ↔ in-cluster Pulsar: a host-native service subscribes via the edge port, publishes to `test.result`, and survives `cluster down` / `cluster up` when the host service remains installed | host-daemon path through `HasPulsar` against the in-cluster broker | yes (jitML `ForwardToHost` Apple inference RPC) | yes (infernix Apple host daemon on `inference.batch.apple-silicon.host`) |
 
 ## Consumer surface mapping
 
@@ -175,9 +186,10 @@ Covers:
 ### `test integration`
 
 The `daemon-substrate-integration` cabal stanza. It requires a running kind cluster brought
-up by `hostbootstrap cluster up` and discovers the repo-local kubeconfig
-(`./.build/daemon-substrate.kubeconfig` on Apple Silicon or
-`./.data/runtime/daemon-substrate.kubeconfig` on Linux). The current live gate checks:
+up by `hostbootstrap cluster up` or an equivalent inner `daemon-substrate-test cluster up`.
+It discovers the repo-local kubeconfig and edge-port record under `./.data/runtime/` for the
+`container` model or `./.build/` for host-native models, then reads the persisted execution
+model marker when present. The current live gate checks:
 
 - cohort-specific kind node count and node readiness
 - Harbor, Pulsar, and MinIO StatefulSet rollouts
@@ -191,28 +203,35 @@ called out in the phase plan.
 
 ### `test lint`
 
-The `daemon-substrate-haskell-style` cabal stanza. `ormolu` + `hlint` against `src/` plus the
-doc validator (the Phase 0 Sprint 0.5 obligation that lands in Phase 8 Sprint 8.5) and the
-proto validator.
+The `daemon-substrate-haskell-style` cabal stanza. It enforces:
+
+- governed-document metadata blocks, required broad-doc headings, relative Markdown link
+  resolution, root README links to `documents/` and `DEVELOPMENT_PLAN/`, and phase-file
+  `## Documentation Requirements` retention
+- no direct `Daemon.Proto.*` imports outside the approved wire/boundary modules
 
 ### `test all`
 
 Runs `lint`, then `unit`, then `lifecycle`, then `integration` in sequence. Stops at the
 first failure.
 
-## Cohort obligations
+## Host and model obligations
 
 Per [`../../DEVELOPMENT_PLAN/development_plan_standards.md` § Q](../../DEVELOPMENT_PLAN/development_plan_standards.md),
-both cohorts (Apple Silicon, Linux CPU) must close before a phase that touches the harness can
-move to `Done`. Phase 8 has closed both cohort gates.
+the harness must validate on the hosts the single `H.Accel.Cpu` target runs on (Apple Silicon
+and Linux). The current harness records the 3×3 model × workflow matrix in
+`Daemon.Test.Matrix`; the integration gate keys node-count and worker-placement expectations
+from the selected execution model rather than from host detection.
 
-On both cohorts the operator entrypoint is `hostbootstrap cluster up`; the `daemon-substrate-test
-test ...` commands run inside the resulting environment (`./.build/daemon-substrate-test ...`
-on Apple Silicon; `hostbootstrap run daemon-substrate-test ...` on Linux CPU). See
+The operator entrypoint is `hostbootstrap cluster up`; the `daemon-substrate-test test ...`
+commands run inside the resulting environment (`hostbootstrap run ...`
+under the `Container` model; `./.build/daemon-substrate-test ...` under the `HostBinary` /
+`HostDaemon` models). See
 [../engineering/hostbootstrap_integration.md](../engineering/hostbootstrap_integration.md).
 
-There is no GPU cohort. The mock engine performs no accelerator work; adding a GPU cohort
-would cost without coverage.
+There is no GPU cohort. The mock engine performs no accelerator work, so the `Cuda` and
+`Metal` capabilities are unused even on hosts that satisfy them; adding a GPU cohort would cost
+without coverage.
 
 ## What this strategy does not cover
 

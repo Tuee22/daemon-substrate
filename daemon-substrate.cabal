@@ -125,12 +125,13 @@ library
     , Daemon.Test.FilesystemKubectl
     , Daemon.Test.FilesystemMinIO
     , Daemon.Test.FilesystemPulsar
-    , Daemon.Test.EchoEngines
     , Daemon.Test.CLI
     , Daemon.Test.CLI.Cluster
     , Daemon.Test.CLI.Service
     , Daemon.Test.CLI.Tests
     , Daemon.Test.CLI.Types
+    , Daemon.Test.EchoEngines
+    , Daemon.Test.Matrix
     , Daemon.Test.MockEngine
     , Daemon.Topology.BatchedFanIn
     , Daemon.Topology.BatchedFanOut

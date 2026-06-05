@@ -2,17 +2,15 @@ module Main (main) where
 
 import Control.Monad (unless, when)
 import Data.List (isPrefixOf)
+import qualified Data.Text.IO as Text.IO
+import Daemon.Cluster.Types (ClusterPaths (..))
+import Daemon.Test.Matrix
 import System.Directory (doesFileExist, findExecutable)
 import System.Exit (ExitCode (ExitSuccess), exitFailure)
 import System.Process (readProcessWithExitCode)
 
-data Cohort
-    = AppleSilicon
-    | LinuxCpu
-    deriving stock (Eq, Show)
-
 data IntegrationEnv = IntegrationEnv
-    { integrationCohort :: !Cohort
+    { integrationExecutionModel :: !HarnessExecutionModel
     , integrationKubeconfig :: !FilePath
     , integrationEdgePortRecord :: !FilePath
     }
@@ -34,27 +32,49 @@ discoverIntegrationEnv :: IO IntegrationEnv
 discoverIntegrationEnv = do
     let candidates =
             [ IntegrationEnv
-                { integrationCohort = LinuxCpu
+                { integrationExecutionModel = ExecutionContainer
                 , integrationKubeconfig = "/workspace/.data/runtime/daemon-substrate.kubeconfig"
                 , integrationEdgePortRecord = "/workspace/.data/runtime/edge-port.json"
                 }
             , IntegrationEnv
-                { integrationCohort = LinuxCpu
+                { integrationExecutionModel = ExecutionContainer
                 , integrationKubeconfig = ".data/runtime/daemon-substrate.kubeconfig"
                 , integrationEdgePortRecord = ".data/runtime/edge-port.json"
                 }
             , IntegrationEnv
-                { integrationCohort = AppleSilicon
+                { integrationExecutionModel = ExecutionHostDaemon
                 , integrationKubeconfig = ".build/daemon-substrate.kubeconfig"
                 , integrationEdgePortRecord = ".build/edge-port.json"
                 }
             ]
     existing <- filterM (doesFileExist . integrationKubeconfig) candidates
     case existing of
-        env : _ -> pure env
+        env : _ -> resolveExecutionModel env
         [] ->
             failIntegration
                 "no repo-local kubeconfig found; run hostbootstrap cluster up before daemon-substrate-test test integration"
+
+resolveExecutionModel :: IntegrationEnv -> IO IntegrationEnv
+resolveExecutionModel env = do
+    let modelPath = executionModelRecordPathFromEdgeRecord (integrationEdgePortRecord env)
+    exists <- doesFileExist modelPath
+    if not exists
+        then pure env
+        else do
+            raw <- Text.IO.readFile modelPath
+            case parseExecutionModel raw of
+                Just model -> pure env{integrationExecutionModel = model}
+                Nothing -> failIntegration ("invalid execution model record at " <> modelPath)
+
+executionModelRecordPathFromEdgeRecord :: FilePath -> FilePath
+executionModelRecordPathFromEdgeRecord edgePath =
+    executionModelRecordPath
+        ClusterPaths
+            { clusterBuildDir = ""
+            , clusterDataDir = ""
+            , clusterKubeconfigPath = ""
+            , clusterEdgePortPath = edgePath
+            }
 
 filterM :: (a -> IO Bool) -> [a] -> IO [a]
 filterM predicate =
@@ -77,9 +97,9 @@ assertNodes :: FilePath -> IntegrationEnv -> IO ()
 assertNodes kubectlPath env = do
     rows <- kubectlLines kubectlPath env ["get", "nodes", "--no-headers"]
     let expected =
-            case integrationCohort env of
-                AppleSilicon -> 2
-                LinuxCpu -> 4
+            case executionModelWorkerPlacement (integrationExecutionModel env) of
+                HostNativeWorker -> 2
+                InClusterWorker -> 4
     expect ("expected " <> show expected <> " kind nodes, saw " <> show (length rows)) (length rows == expected)
     expect "every kind node is Ready" (all fieldTwoReady rows)
 
@@ -97,7 +117,7 @@ assertStatefulSets kubectlPath env =
 assertDeployments :: FilePath -> IntegrationEnv -> IO ()
 assertDeployments kubectlPath env = do
     kubectlOk kubectlPath env ["rollout", "status", "deployment/daemon-substrate-test-orchestrator", "--timeout=30s"]
-    when (integrationCohort env == LinuxCpu) do
+    when (executionModelWorkerPlacement (integrationExecutionModel env) == InClusterWorker) do
         kubectlOk kubectlPath env ["rollout", "status", "deployment/daemon-substrate-test-worker", "--timeout=30s"]
 
 assertPods :: FilePath -> IntegrationEnv -> IO ()
@@ -107,10 +127,10 @@ assertPods kubectlPath env = do
     assertReadyPodCount "daemon-substrate-test-pulsar-" 1 rows
     assertReadyPodCount "daemon-substrate-test-minio-" 1 rows
     assertReadyPodCount "daemon-substrate-test-orchestrator-" 2 rows
-    case integrationCohort env of
-        AppleSilicon ->
+    case executionModelWorkerPlacement (integrationExecutionModel env) of
+        HostNativeWorker ->
             assertReadyPodCount "daemon-substrate-test-worker-" 0 rows
-        LinuxCpu ->
+        InClusterWorker ->
             assertReadyPodCount "daemon-substrate-test-worker-" 2 rows
 
 assertPersistentVolumes :: FilePath -> IntegrationEnv -> IO ()

@@ -53,7 +53,30 @@ recorded here so the substrate's contract stays honest.
 
 ## Completed
 
-(none)
+### hostbootstrap acceleration-keyed re-baseline
+
+These surfaces were obsoleted by the `hostbootstrap` schema refactor that replaced the
+host-keyed config with an acceleration-keyed one (single `H.Accel.Cpu` target matched by
+capability subsumption). They were removed by Phase 1 Sprint 1.4, Phase 7 Sprint 7.4, and
+Phase 8 Sprint 8.7.
+
+- **Host-keyed `hostbootstrap.dhall` entries (`H.entry H.Substrate.AppleSilicon` HostDaemon and
+  `H.entry H.Substrate.LinuxGpu`)** in the root `hostbootstrap.dhall` — replaced by a single
+  `H.target H.Accel.Cpu` target plus the per-model `hostbootstrap-hostbinary.dhall` /
+  `hostbootstrap-hostdaemon.dhall` specs. Owning phase: phase-7, sprint 7.4.
+- **`CMD ["/bin/sh", "-c", "daemon-substrate-test cluster up && sleep infinity"]` Dockerfile
+  form** in `docker/linux-substrate.Dockerfile` — replaced by a tini-wrapped `ENTRYPOINT`,
+  the `RUN daemon-substrate-test check-code` build gate, and
+  `CMD ["cluster", "up", "--model", "container", "--stay-resident"]`. Owning phase:
+  phase-7, sprint 7.4.
+- **`with-compiler: ghc-9.12` line in `cabal.project`** — replaced by the exact
+  `with-compiler: ghc-9.12.4` pin plus `cabal.project.container` for the container-only
+  warm-store freeze import. Owning phase: phase-1, sprint 1.4.
+- **`detectClusterCohort` Apple-vs-Linux cohort branching** in `src/Daemon/Test/CLI/Cluster.hs`
+  — replaced by the execution-model parser and persisted execution-model marker. Owning
+  phase: phase-8, sprint 8.7.
+- **Residual `pip install … hostbootstrap` doc references** — replaced by the `pipx install`
+  form. Owning phase: phase-7, sprint 7.4.
 
 ## Rules
 

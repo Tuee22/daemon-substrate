@@ -1,7 +1,7 @@
 H.config
   { project = "daemon-substrate"
-  , substrates =
-    [ H.entry H.Substrate.LinuxCpu
+  , targets =
+    [ H.target H.Accel.Cpu
         ( H.Model.Container
             H.Container::{
             , dockerfile = "docker/linux-substrate.Dockerfile"
@@ -10,29 +10,6 @@ H.config
               [ H.Mount::{ host = "./.data", container = "/workspace/.data" }
               , H.Mount::{ host = "/var/run/docker.sock", container = "/var/run/docker.sock" }
               ]
-            }
-        )
-    , H.entry H.Substrate.LinuxGpu
-        ( H.Model.Container
-            H.Container::{
-            , dockerfile = "docker/linux-substrate.Dockerfile"
-            , flavor = H.Flavor.Cpu
-            , service = True
-            , mounts =
-              [ H.Mount::{ host = "./.data", container = "/workspace/.data" }
-              , H.Mount::{ host = "/var/run/docker.sock", container = "/var/run/docker.sock" }
-              ]
-            }
-        )
-    , H.entry H.Substrate.AppleSilicon
-        ( H.Model.HostDaemon
-            H.HostDaemon::{
-            , build =
-                H.Build::{
-                , cabal = "cabal install --installdir .build --install-method=copy --overwrite-policy=always exe:daemon-substrate-test"
-                , host = H.HostReqs::{ ghc = True }
-                }
-            , daemon = ".build/daemon-substrate-test service --role worker --config dhall/worker.dhall"
             }
         )
     ]

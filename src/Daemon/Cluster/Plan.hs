@@ -26,6 +26,10 @@ data ClusterBringupConfig = ClusterBringupConfig
 
 defaultClusterBringupConfig :: ClusterCohort -> ClusterBringupConfig
 defaultClusterBringupConfig cohort =
+  defaultClusterBringupConfigWithPaths cohort (defaultClusterPaths cohort)
+
+defaultClusterBringupConfigWithPaths :: ClusterCohort -> ClusterPaths -> ClusterBringupConfig
+defaultClusterBringupConfigWithPaths cohort paths =
   ClusterBringupConfig
     { clusterBringupCohort = cohort,
       clusterBringupPaths = paths,
@@ -38,8 +42,6 @@ defaultClusterBringupConfig cohort =
       clusterBringupWorkload = defaultWorkloadConfig cohort,
       clusterBringupEdgePort = defaultEdgePortConfig paths
     }
-  where
-    paths = defaultClusterPaths cohort
 
 clusterBringupPlan :: ClusterBringupConfig -> ClusterPlan
 clusterBringupPlan config =

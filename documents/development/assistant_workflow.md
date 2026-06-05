@@ -77,12 +77,20 @@ which docs must update together. See:
 
 ## When you touch bootstrap / lifecycle
 
-- Substrate behavior is declared in `hostbootstrap.dhall` at the repository root. Do not
-  hand-roll `bootstrap/*.sh`, `compose.yaml`, or multi-language Dockerfile layers — those
-  responsibilities belong to [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap).
+- `hostbootstrap` is installed via `pipx` only (`pipx install
+  "git+https://github.com/tuee22/hostbootstrap.git#egg=hostbootstrap"`). Do not reintroduce a
+  bare-`pip` install instruction for it.
+- Behavior is declared as a single `H.Accel.Cpu` **target** in `hostbootstrap.dhall` at the
+  repository root (`H.config { project, targets = [ H.target H.Accel.Cpu … ] }`). The three
+  execution models (`Container`, `HostBinary`, `HostDaemon`) are driven by separate spec files
+  selected with `--spec`. Do not hand-roll `bootstrap/*.sh`, `compose.yaml`, or multi-language
+  Dockerfile layers — those responsibilities belong to
+  [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap).
 - The project Dockerfile is intentionally thin: `FROM ${BASE_IMAGE}` plus the project's own
-  build steps. Toolchain installation (GHC, Cabal, kube tools, `protoc`) belongs in the
-  `hostbootstrap` base image, not here.
+  build steps, a tini-wrapped `ENTRYPOINT`, and a `RUN daemon-substrate-test check-code` build
+  gate. Toolchain installation (`ghc-9.12.4`, Cabal, kube tools, `protoc`) belongs in the
+  `hostbootstrap` base image, not here. The warm-store `cabal.project.freeze` import applies
+  to container builds only.
 - The in-cluster reconcilers (kind create, Helm install, ConfigMap render, Deployment apply)
   remain in Haskell under `src/Daemon/Cluster/*`. The seam between `hostbootstrap` and
   `daemon-substrate-test` is documented in

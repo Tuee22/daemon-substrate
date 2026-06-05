@@ -32,9 +32,8 @@ documents. Populate the `documents/` and `DEVELOPMENT_PLAN/` trees with the arch
 engineering, and operations docs the later phases reference.
 
 This phase is closed. The documentation obligations called out by Sprints 0.1 – 0.4 and 0.6
-are complete and validated. The doc validator (Phase 0 Sprint 0.5) is **deferred to Phase 8
-Sprint 8.5**, where it lands as part of the test-lint gate; Phase 0 closure does not depend
-on it.
+are complete and validated. The doc validator obligation from Phase 0 Sprint 0.5 is closed
+through Phase 8 Sprint 8.5 as part of the `daemon-substrate-haskell-style` gate.
 
 ### Phase 1 — library scaffolding and cabal package
 
@@ -118,12 +117,13 @@ Depends on Phase 5 because the chart needs working daemon binaries to deploy.
 
 ### Phase 7 — hostbootstrap.dhall and thin project Dockerfile
 
-Land `hostbootstrap.dhall` at the repository root (declaring `Container` for Linux CPU,
-the same CPU-flavored `Container` for GPU-capable Linux hosts detected by hostbootstrap, and
-`HostDaemon` for Apple Silicon) and the thin `docker/linux-substrate.Dockerfile`
-(`FROM ${BASE_IMAGE}` plus the project's own build steps). After this phase, an operator can
-run `hostbootstrap cluster up` on either cohort and reach a `Ready` cluster. Substrate
-detection, host-prereq install, container / daemon lifecycle, and LaunchDaemon installation
+Land `hostbootstrap.dhall` at the repository root as the default `Container` spec with a
+single `H.Accel.Cpu` target, plus `hostbootstrap-hostbinary.dhall`,
+`hostbootstrap-hostdaemon.dhall`, and the thin `docker/linux-substrate.Dockerfile`
+(`FROM ${BASE_IMAGE}` plus the project's own build steps and `check-code` gate). After this
+phase, an operator can run `hostbootstrap cluster up` under the default container spec or
+select a host-native model with `--spec`. Substrate detection, host-prereq install,
+container / daemon lifecycle, LaunchDaemon / systemd installation, and base-image selection
 are all handled by `hostbootstrap`; this phase only ships the project-side config and
 Dockerfile.
 
@@ -152,8 +152,8 @@ the same phase state. See [development_plan_standards.md § Q](development_plan_
 ## What is intentionally not a phase
 
 - A separate doc-validator phase. The validator is implemented in **Phase 8 Sprint 8.5** as
-  part of the test-lint gate; Phase 0 Sprint 0.5 is a deferred-and-cross-referenced
-  placeholder rather than its own phase.
+  part of the test-lint gate; Phase 0 Sprint 0.5 is closed by reference rather than being its
+  own phase.
 - A separate "release" phase. The library is consumed by sibling path; there is no Hackage
   release ceremony.
 - A "consumer migration" phase. Wiring `infernix` and `jitML` to consume the library is the

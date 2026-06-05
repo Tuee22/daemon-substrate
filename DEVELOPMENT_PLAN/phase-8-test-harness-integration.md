@@ -11,7 +11,8 @@
 ## Phase Status
 
 **Status**: Done
-**Implementation**: Sprints 8.1 through 8.6 are implemented and validated.
+
+Sprints 8.1 through 8.6 closed against the original host-keyed bootstrap:
 `daemon-substrate-test test ...` delegates to Cabal, `cluster ...` executes concrete kind /
 kubectl / helm / Docker image build and kind image-load actions, the local Harbor / Pulsar /
 MinIO dependency charts are deployable, Pulsar and MinIO admin actions run through the live
@@ -22,7 +23,16 @@ Apple Silicon preserved-state kind bring-up, in-place `cluster up` idempotency, 
 edge-port forwarding, host-worker handoff, and a live request -> orchestrator -> host worker
 -> response workflow handoff are validated. Linux hostbootstrap container bring-up,
 two-cycle preserved-state kind bring-up, Ready workload state, and the
-`daemon-substrate-integration` live readiness gate are validated on the Linux cohort.
+`daemon-substrate-integration` live readiness gate are validated. That work remains valid and
+is not being rewritten.
+
+Sprint 8.7 is closed against the acceleration-keyed bootstrap shape: `daemon-substrate-test`
+now exposes `check-code`, cluster commands accept an explicit execution model supplied by the
+hostbootstrap spec, `detectClusterCohort` OS branching is removed, the integration readiness
+gate keys node and worker expectations from the persisted execution-model marker, and
+`Daemon.Test.Matrix` records the 3×3 execution-model × workflow-archetype coverage map.
+
+**Remaining work**: none.
 
 ## Phase Objective
 
@@ -198,23 +208,23 @@ coverage:
 
 #### Objective
 
-Land `daemon-substrate-test test lint`. The sprint owns three gates:
+Land `daemon-substrate-test test lint`. The sprint owns the local style gate:
 
-1. `ormolu` formatting check against `src/` and `test/`
-2. `hlint` against `src/` and `test/`
-3. **Doc validator** implementing the checks named in
-   `documents/documentation_standards.md § Validation` (required metadata block, relative-link
-   resolution, root-doc metadata, `## Documentation Requirements` retention on phase files,
-   root `README.md` reference to both `documents/` and `DEVELOPMENT_PLAN/`)
+1. **Doc validator** implementing the checks named in
+   `documents/documentation_standards.md § Validation` (required metadata block, required
+   broad-doc headings, relative-link resolution, root-doc metadata, `## Documentation
+   Requirements` retention on phase files, root `README.md` reference to both `documents/` and
+   `DEVELOPMENT_PLAN/`)
+2. **Generated-protobuf import boundary**: no direct `Daemon.Proto.*` imports outside approved
+   wire/boundary modules
 
-The doc validator is the deferred Phase 0 Sprint 0.5 obligation. Landing it here closes both
-sprints simultaneously.
+The doc validator closes the Phase 0 Sprint 0.5 obligation; this sprint and Phase 0 Sprint 0.5
+close together.
 
 #### Deliverables
 
-- format / lint orchestration under `src/Daemon/Test/Lint/*`
 - `daemon-substrate-haskell-style` cabal stanza wired up
-- `src/Daemon/Test/Lint/Docs.hs` implementing the doc-validator checks
+- `test/haskell-style/Main.hs` implementing the doc-validator and direct-proto-import checks
 - `documents/documentation_standards.md § Validation` rewritten from forward-looking to
   current-state declarative
 
@@ -322,21 +332,81 @@ Validated locally with:
     the project image on Docker's `kind` network, validating the live readiness gate against
     the current workspace.
 
+### Sprint 8.7: 3×3 model × workflow matrix + check-code subcommand [Done]
+
+**Status**: Done
+**Implementation**: `src/Daemon/Test/CLI/*`, `src/Daemon/Test/Matrix.hs`,
+`src/Daemon/Cluster/*`, `test/integration/*`, `hostbootstrap-hostbinary.dhall`,
+`hostbootstrap-hostdaemon.dhall`
+**Docs to update**: `../documents/development/testing_strategy.md`,
+`../documents/reference/cli_surface.md`, `../documents/engineering/hostbootstrap_integration.md`,
+`../documents/architecture/daemon_roles.md`,
+`../documents/architecture/library_consumption_model.md`,
+`../documents/architecture/pulsar_minio_ssot.md`, `../../README.md`, `system-components.md`
+
+#### Objective
+
+Extend the harness from the earlier two-cohort coverage to the full **3×3 matrix**:
+each of the three execution models (`Container`, `HostBinary`, `HostDaemon`) exercising each of
+three ML workflow archetypes — (a) continuous batched inference (≈ `infernix`), (b) finite
+SL / offline-RL training jobs (≈ `jitML`), and (c) continuous online RL (MinIO weight updates
+announced on Pulsar inference topics; distinct training-vs-inference task messages routable to
+same-or-separate stateless engines). Land the `check-code` subcommand and refactor the test
+suite onto the per-model spec files. `daemon-substrate` is the reference scaffolding for
+`infernix` and `jitML`.
+
+#### Deliverables
+
+- `daemon-substrate-test check-code` subcommand delegates to the static
+  `daemon-substrate-haskell-style` Cabal gate for use as the Dockerfile `RUN … check-code`
+  build gate.
+- `Daemon.Test.Matrix` defines the three execution models, three workflow archetypes, the
+  nine matrix cases, and the audit-row mapping for each archetype.
+- `daemon-substrate-test cluster up` accepts `--model
+  <container|host-binary|host-daemon>` and persists the selected execution model beside the
+  edge-port record; the Dockerfile and HostBinary spec pass the model explicitly.
+- `daemon-substrate-integration` keys readiness expectations from the persisted execution
+  model rather than a host-keyed cohort split; `detectClusterCohort` Apple-vs-Linux branching
+  is removed.
+- the workflow coverage table in `../documents/development/testing_strategy.md` updated to map
+  the three archetypes onto the existing audit rows.
+
+#### Validation
+
+- `cabal build all`
+- `cabal test daemon-substrate-unit`
+- `cabal test daemon-substrate-haskell-style`
+- built `daemon-substrate-test --help`
+- built `daemon-substrate-test check-code`
+- static search confirms `detectClusterCohort` is absent from `src/`
+
+#### Remaining Work
+
+(none)
+
 ## Documentation Requirements
 
 **Engineering docs to create/update:**
-- `../documents/engineering/cabal_layout.md` updates with the four-stanza shape.
+- `../documents/engineering/cabal_layout.md` updates with the four-stanza shape and the
+  `ghc-9.12.4` / container-only-freeze notes.
 
 **Reference docs to create/update:**
-- `../documents/reference/cli_surface.md` updates from "planned" to current-state declarative.
+- `../documents/reference/cli_surface.md` documents the `check-code` build-gate subcommand
+  and the `--spec` per-model selection.
 
 **Development docs to create/update:**
 - `../documents/development/testing_strategy.md` distinguishes the current automated gates
-  from the workflow coverage audit map and records which live readiness checks are enforced
-  by `daemon-substrate-integration`.
+  from the workflow coverage audit map, records which live readiness checks are enforced
+  by `daemon-substrate-integration`, and frames the target 3×3 model × workflow matrix.
+
+**Architecture docs to create/update:**
+- `../documents/architecture/daemon_roles.md`,
+  `../documents/architecture/library_consumption_model.md`, and
+  `../documents/architecture/pulsar_minio_ssot.md` describe the three ML workflow archetypes
+  as the scaffolding contract for `infernix` and `jitML`.
 
 **Cross-references to add:**
-- `system-components.md` flips `daemon-substrate-test`, `daemon-substrate-unit`,
+- `system-components.md` keeps the `daemon-substrate-test`, `daemon-substrate-unit`,
   `daemon-substrate-lifecycle`, `daemon-substrate-integration`, and
-  `daemon-substrate-haskell-style` rows to `Implemented: yes`. Phase 8 closure is the closing
-  milestone for the substrate-library buildout.
+  `daemon-substrate-haskell-style` rows accurate, and records the `check-code` subcommand and
+  the 3×3 matrix as implemented work.

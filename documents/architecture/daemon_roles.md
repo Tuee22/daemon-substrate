@@ -191,6 +191,28 @@ publish/replay, and filesystem-backend orphan cleanup for unreachable declared-p
 objects; `Daemon.Orchestrator.runOrchestratorWithReconciler` is the helper that runs the
 orchestrator and reconciler actions together.
 
+## Reference scaffolding: three ML workflow archetypes
+
+The Worker / Orchestrator role split is the substrate's scaffolding contract for `infernix` and
+`jitML`. The roles are designed to carry three ML workflow archetypes, and the test harness
+targets all three (the full 3×3 model × workflow matrix lives in
+[../development/testing_strategy.md](../development/testing_strategy.md)):
+
+- **(a) Continuous batched inference** (≈ `infernix`). The orchestrator fans requests in off a
+  request topic, batches them, fans out to stateless worker engines, and bridges results back.
+  Workers hold no authoritative state; the conversation / sequence log lives on Pulsar.
+- **(b) Finite SL / offline-RL training jobs** (≈ `jitML`). A bounded training run streams
+  commands and per-step events through Pulsar; checkpoints land in MinIO as `ObjectRef` blobs;
+  the run terminates and exports on completion.
+- **(c) Continuous online RL.** New weights are written to MinIO and their availability is
+  announced on the Pulsar inference topics; distinct training-vs-inference task messages are
+  routable to the **same or separate** stateless engines. Because workers are stateless and
+  engine selection is consumer-supplied, the same role plumbing carries both message classes.
+
+The substrate prescribes the role *shape* these archetypes fit into; the consumer supplies the
+archetype-specific behavior through the typed `BootConfig role app` plug. See
+[library_consumption_model.md](library_consumption_model.md).
+
 ## What is not a daemon role
 
 The substrate has no separate "frontend", "API gateway", "result aggregator", or "control

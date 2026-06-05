@@ -20,3 +20,5 @@ runCliCommand (CliService command) = do
   pure case result of
     Right () -> Right ()
     Left err -> Left (Text.pack (show err))
+runCliCommand CliCheckCode =
+  runHarnessTestCommand TestLint

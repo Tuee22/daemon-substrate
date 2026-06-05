@@ -5,22 +5,31 @@
 **Referenced by**: [../README.md](../README.md), [../architecture/daemon_roles.md](../architecture/daemon_roles.md), [pulsar_topics.md](pulsar_topics.md), [minio_buckets.md](minio_buckets.md), [hostbootstrap_integration.md](hostbootstrap_integration.md), [../operations/cluster_bootstrap_runbook.md](../operations/cluster_bootstrap_runbook.md), [../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md), [../operations/linux_cpu_runbook.md](../operations/linux_cpu_runbook.md)
 
 > **Purpose**: Describe what `daemon-substrate-test cluster up` deploys, where each component
-> runs by cohort, and how the chart parameterizes the Apple Silicon vs Linux CPU split.
+> runs by execution model, and how the chart parameterizes the in-cluster vs host-native worker
+> split.
+
+## Current Status
+
+The single `H.Accel.Cpu` target, the per-model spec files, and the host-native worker under the
+`HostDaemon` model are implemented. Worker placement is keyed by execution model, not by host
+detection: `container` and `host-binary` run the worker Deployment in the kind cluster, while
+`host-daemon` expects the worker to run as a host-managed service. The chart still uses the
+existing cohort values files to express the two topology shapes: three worker nodes when the
+worker runs in-cluster, one worker node when it runs host-native.
 
 ## TL;DR
 
-- A single kind cluster carries Harbor, Pulsar, MinIO, the orchestrator Deployment, and (on
-  Linux CPU) the worker Deployment.
-- On Apple Silicon, the worker runs as a host-native daemon outside the cluster; the cluster
+- A single kind cluster carries Harbor, Pulsar, MinIO, the orchestrator Deployment, and, for
+  `container` / `host-binary`, the worker Deployment.
+- Under `host-daemon`, the worker runs as a host-native daemon outside the cluster; the cluster
   side runs everything else.
-- Pod anti-affinity on `kubernetes.io/hostname` keeps Worker pods one-per-node (Linux CPU);
-  the Linux harness cluster has three worker nodes so the harness can exercise N>1. The
-  Apple Silicon harness cluster uses one worker node because the Worker runs as a host
-  daemon, not an in-cluster Deployment.
-- The kubeconfig lives at `./.build/daemon-substrate.kubeconfig` (Apple) or
-  `./.data/runtime/daemon-substrate.kubeconfig` (Linux outer container).
+- Pod anti-affinity on `kubernetes.io/hostname` keeps Worker pods one-per-node for in-cluster
+  worker models; that topology has three worker nodes so the harness can exercise N>1. The
+  host-native topology uses one worker node because the Worker runs outside the cluster.
+- The kubeconfig lives at `./.data/runtime/daemon-substrate.kubeconfig` for `container` and
+  `./.build/daemon-substrate.kubeconfig` for host-native models.
 
-## Current Status
+## Implementation Details
 
 Phase 6 Sprint 6.1 implements the `Daemon.Cluster.*` Haskell plan-generation modules. They
 produce deterministic bring-up, status, and teardown action plans for kind, manual storage,
@@ -67,12 +76,12 @@ Harbor / Pulsar / MinIO PVCs bound across consecutive `cluster down && cluster u
 | Apache Pulsar | StatefulSet (chart dependency) | workflow SSoT; minimal single-broker config for the harness; advertises the in-cluster service name for broker lookups and uses a fixed BookKeeper port for PVC-backed standalone state |
 | MinIO | StatefulSet (chart dependency) | static blob SSoT; minimal single-node config with an `mc` sidecar for bucket creation and seed object upload |
 | `daemon-substrate-test-orchestrator` | Deployment | the orchestrator role; `replicas: 2`; **no** anti-affinity; reads `orchestrator.dhall` from a mounted ConfigMap; egress-permitted (the only in-cluster workload that may reach the WAN) |
-| `daemon-substrate-test-worker` (Linux CPU cohort only) | Deployment | the worker role; `replicas: 2`; required pod anti-affinity on `kubernetes.io/hostname`; reads `worker.dhall` from a mounted ConfigMap |
+| `daemon-substrate-test-worker` (in-cluster worker models only) | Deployment | the worker role; `replicas: 2`; required pod anti-affinity on `kubernetes.io/hostname`; reads `worker.dhall` from a mounted ConfigMap |
 
-The Linux CPU kind cluster is configured with three worker nodes (one control plane + three
-workers) so it can exercise two Worker pods on distinct nodes. The Apple Silicon kind
-cluster uses one worker node because its Worker process runs outside the cluster under the
-hostbootstrap LaunchDaemon.
+The in-cluster worker topology is configured with three worker nodes (one control plane +
+three workers) so it can exercise two Worker pods on distinct nodes. The host-native worker
+topology uses one worker node because its Worker process runs outside the cluster under the
+hostbootstrap-managed service.
 
 Harbor, Pulsar, and MinIO use PVCs bound to manual PVs. The kind nodes mount the host path
 `./.data/kind/<cohort>/daemon-substrate` at
@@ -106,23 +115,26 @@ only; orchestrator pods carry an `egress-permitted: "true"` label that the polic
 to allow external traffic. This keeps WAN access concentrated on the daemon that needs
 it for model-weight hydration.
 
-## Host-native components (Apple cohort only)
+## Host-native worker (`HostDaemon` model)
 
-When the operator runs `hostbootstrap cluster up` on Apple Silicon (per the `HostDaemon` model
-in `hostbootstrap.dhall`; see [hostbootstrap_integration.md](hostbootstrap_integration.md)):
+When the operator runs `hostbootstrap cluster up` under the `HostDaemon` model (selected with
+`--spec hostbootstrap-hostdaemon.dhall`; see
+[hostbootstrap_integration.md](hostbootstrap_integration.md)) the same single `H.Accel.Cpu`
+declaration places the worker on the host as a managed service (launchd on Apple, systemd on
+Linux):
 
 - Harbor, Pulsar, MinIO, and the orchestrator Deployment all run in the kind cluster as above.
 - The worker daemon runs as `./.build/daemon-substrate-test service --role worker --config
-  dhall/worker.dhall` directly on the host, outside the cluster, under a system-scope
-  LaunchDaemon installed by `hostbootstrap`.
+  dhall/worker.dhall` directly on the host, outside the cluster, under the managed service
+  (launchd on Apple, systemd on Linux) installed by `hostbootstrap`.
 - The host worker connects to in-cluster Pulsar and MinIO via the kind cluster's published
   edge ports (chosen by `chooseEdgePort` starting at 9090, persisted to
   `./.build/edge-port.json`). The record carries `pulsarPort`, `pulsarAdminPort`, and
   `minioPort`; `cluster up` starts matching local `kubectl port-forward` processes and
   `cluster down` stops the recorded pids.
 
-There is no Linux equivalent for the host-worker pattern. On Linux, the worker always runs in
-the cluster.
+Under the `Container` and `HostBinary` models there is no host-native worker; the worker runs
+in the cluster as the Deployment above.
 
 ## Chart layout
 
@@ -176,10 +188,11 @@ packaged harness files are the default source mounted into live pods.
 
 ## kubeconfig paths
 
-| Substrate | Path |
-|-----------|------|
-| Apple Silicon (host-native, one kind worker node) | `./.build/daemon-substrate.kubeconfig` |
-| Linux CPU (outer container) | `./.data/runtime/daemon-substrate.kubeconfig` |
+| Execution model | Path |
+|-----------------|------|
+| `container` | `./.data/runtime/daemon-substrate.kubeconfig` |
+| `host-binary` | `./.build/daemon-substrate.kubeconfig` |
+| `host-daemon` | `./.build/daemon-substrate.kubeconfig` |
 
 Neither path mutates the operator's `~/.kube/config`. The repo-local kubeconfig is the only
 authoritative handle to the harness cluster. On Linux the kubeconfig is exported with
@@ -204,17 +217,20 @@ startup and rewrites its Pulsar / Pulsar admin / MinIO endpoints to `127.0.0.1`.
 
 ## Outer container shape
 
-The outer container that hosts `daemon-substrate-test` on the Linux CPU cohort is built from
-the [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap) base image
-(`docker.io/tuee22/hostbootstrap:basecontainer-cpu-*`). The project Dockerfile
-(`docker/linux-substrate.Dockerfile`) is intentionally thin: `FROM ${BASE_IMAGE}` plus the
-project's own build steps. Every heavy toolchain layer (GHC 9.12, Cabal, `kubectl`, `helm`,
-`kind`, `protoc`, `ormolu`, `hlint`, warm Haskell store) lives in the base. The service
-container runs `daemon-substrate-test cluster up && sleep infinity`, so a successful
+The outer container that hosts `daemon-substrate-test` under the `Container` model is built
+from the [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap) base image
+(`docker.io/tuee22/hostbootstrap:basecontainer-cpu-{amd64,arm64}`, selected from the target's
+`H.Accel.Cpu`). The project Dockerfile (`docker/linux-substrate.Dockerfile`) is intentionally
+thin: `FROM ${BASE_IMAGE}` plus the project's own build steps, a tini-wrapped `ENTRYPOINT`, and
+a `RUN daemon-substrate-test check-code` build gate. Every heavy toolchain layer
+(`ghc-9.12.4`, Cabal, `kubectl`, `helm`, `kind`,
+`protoc`, `ormolu`, `hlint`, warm Haskell store) lives in the base; the warm-store
+`cabal.project.freeze` import applies to this container build only. The service container's
+default command runs the inner cluster reconciler and stays resident, so a successful
 reconciliation does not trigger hostbootstrap's restart policy to loop the bring-up command.
 
 See [hostbootstrap_integration.md](hostbootstrap_integration.md) for the full integration
-shape and the `hostbootstrap.dhall` that declares the per-substrate model.
+shape and the `hostbootstrap.dhall` that declares the single `H.Accel.Cpu` target.
 
 ## Cross-references
 

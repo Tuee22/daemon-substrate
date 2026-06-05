@@ -308,7 +308,7 @@ See [Phase 4 Sprint 4.5](../../DEVELOPMENT_PLAN/phase-4-engine-mock-protos-audit
 
 ## Consumer payload encoding (non-normative)
 
-`infernix` and `jitML` are both Haskell consumers on shared GHC 9.12; the substrate does not
+`infernix` and `jitML` are both Haskell consumers on shared `ghc-9.12.4`; the substrate does not
 impose a wire encoding on consumer payloads. Substrate guarantees envelope discipline and
 routes by `WorkflowEvent.payload_type` URL prefix via `Daemon.Consumer.HandlerRouter`.
 

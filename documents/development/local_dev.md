@@ -9,9 +9,9 @@
 
 ## TL;DR
 
-- Install `hostbootstrap` into host Python (one-time).
+- Install `hostbootstrap` via `pipx` (one-time).
 - Clone the repo.
-- Run `hostbootstrap doctor` and `hostbootstrap cluster up`.
+- Run `hostbootstrap doctor` and `hostbootstrap cluster up` (model selected by `--spec`).
 - Use `daemon-substrate-test test ...` for unit and integration coverage.
 
 ## Current Status
@@ -34,25 +34,40 @@ retained PVCs, and the live integration readiness gate.
 ## One-time install
 
 [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap) is the canonical infrastructure
-layer for this repository — substrate detection, host prereqs, base image, container / daemon
-lifecycle. Install it into host Python (not a project virtualenv):
+layer for this repository — host detection, host prereqs, base image, and the Container /
+HostBinary / HostDaemon execution models. Install it via `pipx` only.
+
+Install the `pipx` prereq first:
+
+- **macOS**: `brew install pipx && pipx ensurepath`
+- **Ubuntu**: `sudo apt install -y pipx && pipx ensurepath`
+
+Then install `hostbootstrap`:
 
 ```bash
-python -m pip install "git+https://github.com/Tuee22/hostbootstrap.git#egg=hostbootstrap"
+pipx install "git+https://github.com/tuee22/hostbootstrap.git#egg=hostbootstrap"
 ```
 
 Stock Python 3.12 on macOS arm64 or Ubuntu 24.04 is sufficient. `hostbootstrap` provisions its
 own native `dhall-to-json` binary on first use.
 
-## Supported cohorts
+## One CPU target, three execution models
 
-| Cohort | Host | hostbootstrap model | Test binary location |
-|--------|------|---------------------|----------------------|
-| Apple Silicon | macOS arm64 | `HostDaemon` (system-scope LaunchDaemon) | `./.build/daemon-substrate-test` (built natively via `ghcup`) |
-| Linux CPU | x86_64 / arm64 Linux | `Container` (`service = True`) | inside the thin project container (`FROM ${BASE_IMAGE}`) |
+`daemon-substrate` is CPU-only, so it declares a single `H.Accel.Cpu` target that
+`hostbootstrap` matches to every host by capability subsumption (`apple-silicon` →
+`{ Cpu, Metal }`, `linux-cpu` → `{ Cpu }`, `linux-gpu` → `{ Cpu, Cuda }`). The execution model
+is chosen by **spec file**, not by host:
 
-There is no host-native Linux workflow. Linux contributors always go through the outer
-container.
+| Spec (`--spec`) | Model | Test binary location |
+|-----------------|-------|----------------------|
+| `hostbootstrap.dhall` (default) | `Container` | inside the thin project container (`FROM ${BASE_IMAGE}`) |
+| `hostbootstrap-hostbinary.dhall` | `HostBinary` | `./.build/daemon-substrate-test` (built natively) |
+| `hostbootstrap-hostdaemon.dhall` | `HostDaemon` | `./.build/daemon-substrate-test` run as a managed launchd (Apple) / systemd (Linux) service |
+
+The harness target is the full **3×3 matrix**: each model exercising each of three ML workflow
+archetypes — continuous batched inference (≈ `infernix`), finite SL / offline-RL training jobs
+(≈ `jitML`), and continuous online RL. `daemon-substrate` is the reference scaffolding for both
+consumers. See [testing_strategy.md](testing_strategy.md).
 
 ## First-run prerequisites
 
@@ -63,7 +78,7 @@ container.
 `hostbootstrap doctor` verifies / installs:
 
 - Homebrew
-- `ghcup` and GHC 9.12
+- `ghcup` and `ghc-9.12.4`
 - Cabal (paired with the GHC pin)
 - Colima (the only supported Docker environment on Apple Silicon)
 
@@ -79,47 +94,48 @@ full prerequisite list and the manual steps the tool cannot do (Apple ID, Homebr
 - User-namespace access to `/var/run/docker.sock`
 
 See [../operations/linux_cpu_runbook.md](../operations/linux_cpu_runbook.md) for the full
-prerequisite list. GHC, Cabal, `kubectl`, `helm`, `kind`, and `protoc` are baked into the
-`hostbootstrap` base image; no host-level Haskell toolchain is required.
+prerequisite list. `ghc-9.12.4`, Cabal, `kubectl`, `helm`, `kind`, and `protoc` are baked into
+the `hostbootstrap` base image; no host-level Haskell toolchain is required for the `Container`
+model.
 
 ## Build and test loop
 
-### Apple Silicon
-
-```bash
-hostbootstrap doctor                                        # one-time: install prereqs
-hostbootstrap cluster up                                    # build binary, install LaunchDaemon, bring kind cluster up
-./.build/daemon-substrate-test test unit
-./.build/daemon-substrate-test test integration
-./.build/daemon-substrate-test cluster status
-hostbootstrap cluster down                                  # tear down; preserves ./.data/
-```
-
-After the first bring-up, `./.build/daemon-substrate-test ...` is the canonical command
-surface for the test commands. `hostbootstrap` is only invoked when the LaunchDaemon or
-prerequisites change.
-
-### Linux CPU
+### `Container` model (default)
 
 ```bash
 hostbootstrap doctor
 hostbootstrap cluster up
-hostbootstrap run daemon-substrate-test test unit
-hostbootstrap run daemon-substrate-test test integration
-hostbootstrap run daemon-substrate-test cluster status
+hostbootstrap run test unit
+hostbootstrap run test integration
+hostbootstrap run cluster status --model container
 hostbootstrap cluster down
 ```
 
 `hostbootstrap run <cmd...>` dispatches into the project container, which carries the
 toolchain (from the base image) and the compiled `daemon-substrate-test` binary.
 
+### `HostDaemon` / `HostBinary` models (native host build)
+
+```bash
+hostbootstrap doctor                                              # one-time: install prereqs
+hostbootstrap cluster up --spec hostbootstrap-hostdaemon.dhall    # build binary, install managed service, bring kind cluster up
+./.build/daemon-substrate-test test unit
+./.build/daemon-substrate-test test integration
+./.build/daemon-substrate-test cluster status
+hostbootstrap cluster down --spec hostbootstrap-hostdaemon.dhall  # tear down; preserves ./.data/
+```
+
+After the first bring-up, `./.build/daemon-substrate-test ...` is the canonical command
+surface for the test commands. `hostbootstrap` is only invoked when the managed service or
+prerequisites change.
+
 ## What's in `./.build/` and `./.data/`
 
-- `./.build/` (Apple only): the compiled `daemon-substrate-test` binary, the staged Dhall
-  configs, the kubeconfig (`daemon-substrate.kubeconfig`), and the chosen edge port
-  (`edge-port.json`).
+- `./.build/` (native `HostBinary` / `HostDaemon` builds): the compiled
+  `daemon-substrate-test` binary, the staged Dhall configs, the kubeconfig
+  (`daemon-substrate.kubeconfig`), and the chosen edge port (`edge-port.json`).
 - `./.data/`: durable cluster state (PV-backing files), runtime state (Pulsar / MinIO / Harbor
-  data). On Linux this is the only bind mount into the project container.
+  data). Under the `Container` model this is the only bind mount into the project container.
 
 Neither directory is checked in. `hostbootstrap cluster down` preserves both so a fresh `up`
 is fast; `hostbootstrap cluster delete` (thorough teardown) also preserves `./.data/`.

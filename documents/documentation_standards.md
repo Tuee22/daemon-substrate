@@ -14,7 +14,7 @@
 - Broad doctrine docs use stronger structure: summary first, explicit current-status notes when
   current and target behavior mix, and validation sections when tests or lint prove the contract.
 - The Phase 0 documentation validator is the mechanical enforcement point for the governed docs
-  suite once it lands.
+  suite and runs through `daemon-substrate-haskell-style`.
 
 ## Metadata Block
 
@@ -155,12 +155,8 @@ Rules:
 
 ## Validation
 
-Current implementation note: `daemon-substrate-haskell-style` is implemented as a local style
-suite and passes in Phase 8 Sprint 8.5. Negative fixture checks and live
-`daemon-substrate-test test lint` delegation remain tracked by Phase 8 phase-level remaining
-work.
-
-The documentation validator owned by Phase 0 of `DEVELOPMENT_PLAN/` checks:
+`daemon-substrate-haskell-style` is the current mechanical validator for governed docs and the
+approved generated-protobuf import boundary. It checks:
 
 - required metadata lines for governed `documents/` content
 - required structure for the named broad doctrine docs whose headings are part of the supported
@@ -170,6 +166,7 @@ The documentation validator owned by Phase 0 of `DEVELOPMENT_PLAN/` checks:
 - relative link resolution for governed docs, governed root docs, and phase-plan docs
 - root `README.md` references to both `documents/` and `DEVELOPMENT_PLAN/`
 - `DEVELOPMENT_PLAN/` phase documents retaining their `## Documentation Requirements` section
+- no direct `Daemon.Proto.*` imports outside the approved wire/boundary modules
 
-The validator is implementation work owned by a later phase. Until it lands, contributors apply
-the rules above by hand; cross-link resolution is the most useful manual check.
+Run it with `cabal test daemon-substrate-haskell-style` or through
+`daemon-substrate-test check-code`.

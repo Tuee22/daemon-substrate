@@ -60,6 +60,7 @@ import Daemon.Test.FilesystemHarbor
 import Daemon.Test.FilesystemKubectl
 import Daemon.Test.FilesystemMinIO
 import Daemon.Test.FilesystemPulsar
+import Daemon.Test.Matrix
 import Daemon.Test.MockEngine
 import Daemon.Topology.BatchedFanIn qualified as BatchedFanIn
 import Daemon.Topology.BatchedFanOut qualified as BatchedFanOut
@@ -787,8 +788,24 @@ testRunService = do
 
 testCliSurface :: IO ()
 testCliSurface = do
-    liftAssert "CLI parses cluster up" (parseCliCommand ["cluster", "up"] == Right (CliCluster ClusterUp))
+    liftAssert
+        "CLI parses cluster up"
+        (parseCliCommand ["cluster", "up"] == Right (CliCluster (ClusterUp defaultClusterOptions)))
+    liftAssert
+        "CLI parses cluster up model"
+        ( parseCliCommand ["cluster", "up", "--model", "host-daemon", "--stay-resident"]
+            == Right
+                ( CliCluster
+                    ( ClusterUp
+                        ClusterOptions
+                            { clusterOptionsModel = ExecutionHostDaemon
+                            , clusterOptionsStayResident = True
+                            }
+                    )
+                )
+        )
     liftAssert "CLI parses test all" (parseCliCommand ["test", "all"] == Right (CliTest TestAll))
+    liftAssert "CLI parses check-code" (parseCliCommand ["check-code"] == Right CliCheckCode)
     liftAssert
         "CLI parses service config"
         ( parseCliCommand ["service", "--role", "worker", "--config", "dhall/worker.dhall"]
@@ -803,10 +820,16 @@ testCliSurface = do
                 )
         )
     liftAssert "CLI help lists service command" ("service --role" `Text.isInfixOf` renderCliHelp)
-    liftAssert "cluster up render includes kind create" ("kind-create" `Text.isInfixOf` renderClusterCommand ClusterUp)
+    liftAssert "CLI help lists check-code" ("check-code" `Text.isInfixOf` renderCliHelp)
+    liftAssert "cluster up render includes kind create" ("kind-create" `Text.isInfixOf` renderClusterCommand (ClusterUp defaultClusterOptions))
     liftAssert
         "test all render includes integration suite"
         ("daemon-substrate-integration" `Text.isInfixOf` renderHarnessTestCommand TestAll)
+    liftAssert "matrix has nine cases" (matrixCaseCount == 9)
+    liftAssert "matrix covers every model/archetype pair once" matrixCoversEveryPair
+    liftAssert
+        "continuous inference maps to infernix rows"
+        (13 `elem` workflowArchetypeAuditRows ContinuousBatchedInference && 26 `elem` workflowArchetypeAuditRows ContinuousBatchedInference)
 
 testProtoRoundTrips :: IO ()
 testProtoRoundTrips = do
@@ -2486,8 +2509,12 @@ testClusterLifecyclePlans = do
         appleConfig = ClusterPlan.defaultClusterBringupConfig ClusterTypes.AppleSilicon
         applePlan = ClusterPlan.clusterBringupPlan appleConfig
         appleNames = ClusterTypes.clusterActionNames (ClusterTypes.clusterPlanActions applePlan)
+        hostBinaryConfig = defaultClusterBringupConfigForModel ExecutionHostBinary
+        hostDaemonConfig = defaultClusterBringupConfigForModel ExecutionHostDaemon
         workerRollout = "worker-rollout"
     liftAssert "cluster plan records Linux cohort" (ClusterTypes.clusterPlanCohort linuxPlan == ClusterTypes.LinuxCpu)
+    liftAssert "host-binary uses host kubeconfig path" (ClusterTypes.clusterKubeconfigPath (ClusterPlan.clusterBringupPaths hostBinaryConfig) == ".build/daemon-substrate.kubeconfig")
+    liftAssert "host-daemon uses host-native worker placement" (ClusterPlan.clusterBringupCohort hostDaemonConfig == ClusterTypes.AppleSilicon)
     assertActionBefore "cluster creates kind before storage" "kind-create" "storage-class" linuxNames
     assertActionBefore "linux cluster connects to kind network after create" "kind-create" "kind-network-connect" linuxNames
     assertActionBefore "linux cluster exports kubeconfig after network connect" "kind-network-connect" "kind-export-kubeconfig" linuxNames

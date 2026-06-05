@@ -325,9 +325,9 @@ Static quality and compiler hygiene are first-class repository requirements.
 - The library builds with strict compiler warnings as errors on supported paths.
 - The plan distinguishes mechanically enforced hard-gate inputs from editor-only guidance and
   keeps review guidance separate from hard validation rules.
-- The lint and format toolchain bootstrap, the validator implementation, and the CI wiring are
-  owned by an explicit sprint. Until that sprint closes, contributors run formatters and
-  warnings checks by hand.
+- The documentation validator is implemented in `daemon-substrate-haskell-style`; formatter,
+  hlint, and CI wiring are explicit future hardening items if the repository chooses to require
+  those tools mechanically outside the `hostbootstrap` base.
 
 ### O. Imported Practices and Explicit Non-Adoption
 
@@ -379,8 +379,8 @@ Definitions:
   `./.build/daemon-substrate-test ...` commands.
 - **Linux CPU cohort:** Linux outer-container workflow through `hostbootstrap cluster up`
   (which builds the thin project container `FROM` the `hostbootstrap` base tag and runs it
-  per the `Container` model) or `hostbootstrap run daemon-substrate-test ...` for ad-hoc
-  invocations inside the container.
+  per the `Container` model) or `hostbootstrap run ...` for ad-hoc invocations inside the
+  container.
 
 There is intentionally no GPU cohort. The mock engine performs no accelerator work, so a CUDA or
 Metal cohort would add cost without exercising any library surface the CPU cohort does not

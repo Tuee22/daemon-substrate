@@ -8,8 +8,7 @@
 > public module surfaces, typeclasses, protobuf schemas, daemon roles, lifecycle phases, test
 > harness pieces, chart workloads, bootstrap entrypoints.
 
-> Note: items below describe the **target** inventory the substrate is being built toward.
-> A given item is `Implemented` only when the relevant phase document marks it `Done`. See
+> Note: items below describe the current implemented inventory for the closed phase plan. See
 > [README.md](README.md) for current per-phase status.
 
 ## Workflow terminology
@@ -238,28 +237,31 @@ this repository ships only the project-side config and the thin project Dockerfi
 [`../documents/engineering/hostbootstrap_integration.md`](../documents/engineering/hostbootstrap_integration.md)
 for the integration shape.
 
-| Entrypoint | Cohort | Model | Delegates to |
-|------------|--------|-------|--------------|
-| `hostbootstrap cluster up` (via `hostbootstrap.dhall` `H.Substrate.AppleSilicon` entry) | apple-silicon | `HostDaemon` | LaunchDaemon running `./.build/daemon-substrate-test service --role worker` |
-| `hostbootstrap cluster up` (via `hostbootstrap.dhall` `H.Substrate.LinuxCpu` entry) | linux-cpu | `Container` (`service = True`) | project container running `daemon-substrate-test cluster up && sleep infinity` |
-| `hostbootstrap cluster up` (via `hostbootstrap.dhall` `H.Substrate.LinuxGpu` entry) | gpu-capable Linux host, CPU harness | `Container` (`service = True`, `flavor = Cpu`) | same CPU harness container; this is compatibility for hostbootstrap detection, not a GPU cohort |
+The bootstrap shape declares a single `H.Accel.Cpu` target that runs on every host (matched by
+capability subsumption); the execution model is selected by `--spec`:
+
+| Entrypoint | Spec (`--spec`) | Model | Delegates to |
+|------------|------------------|-------|--------------|
+| `hostbootstrap cluster up` | `hostbootstrap.dhall` (default) | `Container` | project container running `daemon-substrate-test cluster up --model container --stay-resident` |
+| `hostbootstrap cluster up --spec hostbootstrap-hostbinary.dhall` | `hostbootstrap-hostbinary.dhall` | `HostBinary` | native `./.build/daemon-substrate-test cluster up --model host-binary` handoff |
+| `hostbootstrap cluster up --spec hostbootstrap-hostdaemon.dhall` | `hostbootstrap-hostdaemon.dhall` | `HostDaemon` | managed service (launchd on Apple, systemd on Linux) running `./.build/daemon-substrate-test service --role worker` |
 
 ## Project-side bootstrap files
 
 | File | Purpose |
 |------|---------|
-| `hostbootstrap.dhall` | typed per-substrate config consumed by `hostbootstrap`; declares Container / HostDaemon model and mounts |
-| `docker/linux-substrate.Dockerfile` | thin project Dockerfile (`FROM ${BASE_IMAGE}` plus the project's own build steps); the heavy toolchain is in the base |
+| `hostbootstrap.dhall` | typed config consumed by `hostbootstrap`; declares a single `H.Accel.Cpu` target wrapped in the `Container` model plus mounts (the default spec) |
+| `hostbootstrap-hostbinary.dhall` | same single `H.Accel.Cpu` target wrapped in the `HostBinary` model |
+| `hostbootstrap-hostdaemon.dhall` | same single `H.Accel.Cpu` target wrapped in the `HostDaemon` model (launchd on Apple, systemd on Linux) |
+| `docker/linux-substrate.Dockerfile` | thin project Dockerfile (`FROM ${BASE_IMAGE}` plus the project's own build steps, a tini-wrapped `ENTRYPOINT`, and a `RUN daemon-substrate-test check-code` build gate); the heavy toolchain is in the base |
+| `cabal.project.container` | container-only Cabal project file importing `/opt/basecontainer/haskell-deps/cabal.project.freeze` |
 
-`hostbootstrap.dhall` and `docker/linux-substrate.Dockerfile` are implemented and validated.
-Apple Silicon `hostbootstrap doctor`, `build`, `cluster up`, LaunchDaemon inspection, and
-`cluster down` are validated in Phase 7 Sprint 7.3. Linux hostbootstrap `doctor`, `build`,
-and `cluster up` are validated on an Ubuntu 24.04 amd64 host detected as `linux-gpu`, mapped
-by this repo to the CPU-flavored harness container. Apple Silicon inner kind
-preserved-state bring-up with PVC-backed dependency state, named native Pulsar Failover
-leadership, managed edge-port forwarding, host-worker handoff, and live workflow handoff is
-validated. Linux preserved-state bring-up, retained PV reattachment, orchestrator and worker
-rollouts, edge-port preservation, and live readiness integration are validated.
+The original host-keyed `hostbootstrap.dhall` and shell-form service `CMD` were validated in
+Phase 7 Sprint 7.3 and then replaced in Phase 7 Sprint 7.4 by the single `H.Accel.Cpu` target,
+per-model specs, tini-wrapped `ENTRYPOINT`, and `check-code` Dockerfile gate. Phase 8 Sprint
+8.7 added the model-keyed harness surface (`cluster --model`, persisted execution-model
+records, and `Daemon.Test.Matrix`). The obsolete host-keyed entries and sleep-form command are
+closed in the cleanup ledger.
 
 ## Base image
 
@@ -269,7 +271,7 @@ no base image).
 
 | Tag | Used by | Provides |
 |-----|---------|----------|
-| `docker.io/tuee22/hostbootstrap:basecontainer-cpu-amd64` / `-arm64` | Linux CPU cohort | GHC 9.12, Cabal, kube tools (`kubectl`, `helm`, `kind`), `protoc`, `ormolu`, `hlint`, warm Haskell store |
+| `docker.io/tuee22/hostbootstrap:basecontainer-cpu-amd64` / `-arm64` | CPU target | `ghc-9.12.4`, Cabal, kube tools (`kubectl`, `helm`, `kind`), `protoc`, `ormolu`, `hlint`, warm Haskell store |
 
 The Pulsar client is in-process pure Haskell (`Daemon.Pulsar.Native` over the native binary
 protocol; `Daemon.Pulsar.Admin.Http` over admin REST), so the base image needs **no** Node
@@ -295,7 +297,7 @@ mounts them through the orchestrator/worker ConfigMaps.
 ## CLI surface
 
 See [`../documents/reference/cli_surface.md`](../documents/reference/cli_surface.md) for the
-authoritative `daemon-substrate-test` command surface.
+authoritative `daemon-substrate-test` command surface, including `check-code`.
 
 ## Update rule
 

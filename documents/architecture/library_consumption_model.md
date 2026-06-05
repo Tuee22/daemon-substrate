@@ -32,10 +32,10 @@ packages:
   .
   ../daemon-substrate
 
-with-compiler: ghc-9.12
+with-compiler: ghc-9.12.4
 ```
 
-GHC pin (`9.12`) is shared across `daemon-substrate`, `infernix`, and `jitML`, and matches the
+GHC pin (`9.12.4`) is shared across `daemon-substrate`, `infernix`, and `jitML`, and matches the
 GHC the [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap) base image ships.
 Mismatched compiler pins are not supported.
 
@@ -235,6 +235,25 @@ records the same way.
 These rules match the consumer projects' own doctrines so the library never relaxes a
 constraint the consumer enforces.
 
+## Reference scaffolding for the three ML workflow archetypes
+
+`daemon-substrate` is the reference scaffolding `infernix` and `jitML` build on. The library
+surface above is deliberately shaped to carry three ML workflow archetypes without prescribing
+any of them:
+
+- **(a) Continuous batched inference** (≈ `infernix`) — `runOrchestrator` fan-in + batching,
+  `runWorker` engine dispatch, `runBridge` result fan-back; sequence state on Pulsar.
+- **(b) Finite SL / offline-RL training jobs** (≈ `jitML`) — bounded runs over Pulsar with
+  `FiniteSession` topic lifecycle; checkpoints as MinIO `ObjectRef` blobs.
+- **(c) Continuous online RL** — `runFanInBootstrap` writes new weights to MinIO and announces
+  them on the Pulsar inference topics; distinct training-vs-inference task messages route by
+  `payload_type` URL prefix to the same or separate stateless engines.
+
+The substrate provides the base loops, topology primitives, batching machinery, and lifecycle
+policy; the consumer plugs in its archetype-specific `app` record, payloads, and
+`OrchestratorBehavior`. The test harness validates all three archetypes against each execution
+model (the 3×3 matrix in [../development/testing_strategy.md](../development/testing_strategy.md)).
+
 ## Sealed consumer loops
 
 `infernix` and `jitML` are **sealed loops** over shared substrate primitives. They share
@@ -257,10 +276,12 @@ consumer-domain timescales.
 ## Substrate-aware test harness
 
 The library code is substrate-agnostic; the *test harness* that proves the library works is
-necessarily substrate-aware for cluster bootstrap (Apple host build vs Linux outer container).
-The harness lives outside `src/Daemon/*` — under `hostbootstrap.dhall`,
+necessarily aware of the execution model for cluster bootstrap (`Container` project image vs
+`HostBinary` / `HostDaemon` native host build). The harness declares a single `H.Accel.Cpu`
+target and lives outside `src/Daemon/*` — under `hostbootstrap.dhall` (plus the per-model
+`hostbootstrap-hostbinary.dhall` / `hostbootstrap-hostdaemon.dhall` specs),
 `docker/linux-substrate.Dockerfile`, `chart/`, `src/Daemon/Cluster/*`, and the
-`daemon-substrate-test` executable. The substrate-specific bring-up itself is delegated to
+`daemon-substrate-test` executable. The host-specific bring-up itself is delegated to
 [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap); see
 [`../engineering/hostbootstrap_integration.md`](../engineering/hostbootstrap_integration.md).
 Consumers do not run the harness; it exists for `daemon-substrate`'s own validation. See

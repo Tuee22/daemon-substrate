@@ -10,8 +10,14 @@
 ## Phase Status
 
 **Status**: Done
-**Implementation**: `daemon-substrate.cabal`, `cabal.project`, `src/Daemon/`,
-`test/`, `.github/workflows/ci.yml`
+
+The original scaffolding (Sprints 1.1–1.3) is implemented, and Sprint 1.4 is now closed:
+`cabal.project` pins the exact `ghc-9.12.4` toolchain, enables the warm-store-compatible
+`tests` / `benchmarks` / `shared` / `optimization: 2` profile, and
+`cabal.project.container` imports `/opt/basecontainer/haskell-deps/cabal.project.freeze` for
+container builds only. Native `HostBinary` / `HostDaemon` builds use the root
+`cabal.project` and do not import the base-image freeze.
+
 **Remaining work**: none.
 
 ## Phase Objective
@@ -41,7 +47,7 @@ toolchain.
 - `daemon-substrate.cabal` with one `library` stanza and the four `test-suite` stanzas
   (`daemon-substrate-unit`, `daemon-substrate-lifecycle`, `daemon-substrate-integration`,
   `daemon-substrate-haskell-style`; initially empty `Main.hs` placeholders)
-- `cabal.project` with `with-compiler: ghc-9.12` (matching the
+- `cabal.project` with `with-compiler: ghc-9.12.4` (matching the
   [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap) base image) and the
   `allow-newer: *:base, *:template-haskell` carve-out
 - `cabal build all` succeeds with the placeholder modules
@@ -107,15 +113,50 @@ CI workflow runs green on the first push that includes it.
 
 (none)
 
+### Sprint 1.4: `cabal.project` → `ghc-9.12.4` + container-only warm-store freeze [Done]
+
+**Status**: Done
+**Implementation**: `cabal.project`, `cabal.project.container`
+**Docs to update**: `documents/engineering/cabal_layout.md`,
+`documents/engineering/hostbootstrap_integration.md`, `system-components.md`
+
+#### Objective
+
+Tighten the GHC pin from `ghc-9.12` to the exact `ghc-9.12.4` to match the `hostbootstrap`
+base image, and add the warm-store settings — the `cabal.project.freeze` import scoped to
+**container builds only** (`/opt/basecontainer/haskell-deps/cabal.project.freeze`). Native
+`HostBinary` / `HostDaemon` builds resolve against the host's own ghcup-provided `ghc-9.12.4`
+and do not import the warm-store freeze.
+
+#### Deliverables
+
+- `cabal.project` pins `with-compiler: ghc-9.12.4` (exact), replacing `with-compiler: ghc-9.12`.
+- `cabal.project` carries the warm-store-compatible `tests: True`, `benchmarks: True`,
+  `shared: True`, and `optimization: 2` profile.
+- `cabal.project.container` imports the warm-store `cabal.project.freeze`; native builds do
+  not.
+
+#### Validation
+
+- `cabal build all` resolves and builds against `ghc-9.12.4`.
+- Static shape check confirms `cabal.project.container` imports the root project file and
+  `/opt/basecontainer/haskell-deps/cabal.project.freeze`.
+
+#### Remaining Work
+
+(none)
+
 ## Documentation Requirements
 
 **Engineering docs to create/update:**
-- `documents/engineering/cabal_layout.md` updates from provisional to current-state declarative
-  once the cabal file exists.
+- `documents/engineering/cabal_layout.md` records the exact `ghc-9.12.4` pin and the
+  container-only warm-store freeze.
+- `documents/engineering/hostbootstrap_integration.md` keeps the base-image toolchain and
+  container-only freeze statement aligned.
 
 **Reference docs to create/update:**
 - none unique to this phase
 
 **Cross-references to add:**
-- `system-components.md` flips Phase 1 inventory rows from `Implemented: no` to
-  `Implemented: yes` as sprints close.
+- `system-components.md` keeps Phase 1 inventory rows accurate and records the `ghc-9.12.4`
+  pin and container-only freeze as implemented.

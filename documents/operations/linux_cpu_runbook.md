@@ -10,14 +10,17 @@
 
 ## TL;DR
 
-- Linux is always exercised through the outer container. There is no host-native Linux
-  workflow.
-- The substrate is brought up by `hostbootstrap cluster up`, which builds a thin project
-  container `FROM` the `hostbootstrap` base tag (per the `Container` model declared in
-  `hostbootstrap.dhall`) and runs it long-running with `service = True`.
-- If hostbootstrap detects a GPU-capable Linux host as `linux-gpu`, this repository still
-  selects the CPU-flavored harness container. That compatibility entry does not create a GPU
-  test cohort.
+- Linux (`linux-cpu`) is one of the hosts the single `H.Accel.Cpu` target runs on;
+  `hostbootstrap` matches it by capability subsumption (`linux-cpu` satisfies `{ Cpu }`).
+- The default `Container` model brings the substrate up via `hostbootstrap cluster up`, which
+  builds a thin project container `FROM` the `hostbootstrap` base image (per the `Container`
+  model declared in `hostbootstrap.dhall`) and runs it long-running with `service = True`.
+- A GPU-capable host detected as `linux-gpu` satisfies `{ Cpu, Cuda }`, so the same `Cpu`
+  target runs on it unchanged. There is no GPU test cohort; the `Cuda` capability is simply
+  unused by this CPU-only repository.
+- The same `Cpu` target also runs under the `HostBinary` and `HostDaemon` models (selected
+  with `--spec hostbootstrap-hostbinary.dhall` / `--spec hostbootstrap-hostdaemon.dhall`); a
+  `Cpu` `HostDaemon` installs a systemd service on Linux.
 - The container carries the compiled `daemon-substrate-test` binary, GHC (from the base), the
   staged Dhall, and the `kind` binary.
 - The worker daemon runs *inside* the kind cluster as a two-replica Deployment with pod
@@ -31,8 +34,8 @@ Minimal pre-existing host state:
 
 - A reasonably current Linux distribution (Ubuntu 24.04 is the reference; other modern
   glibc-based distros work)
-- Python 3.12 with `hostbootstrap` installed (see
-  [../development/local_dev.md](../development/local_dev.md))
+- `pipx` installed (`sudo apt install -y pipx && pipx ensurepath`) with `hostbootstrap`
+  installed via `pipx` (see [../development/local_dev.md](../development/local_dev.md))
 - Docker Engine with the Compose plugin
 - `docker buildx`
 - The invoking user has socket access to `/var/run/docker.sock` (`hostbootstrap doctor`
@@ -42,8 +45,8 @@ Minimal pre-existing host state:
 when missing. It does not modify your user's group membership; that step is the operator's
 responsibility.
 
-GHC, Cabal, `kubectl`, `helm`, `kind`, and `protoc` are baked into the `hostbootstrap` base
-image; no host-level Haskell toolchain is required.
+`ghc-9.12.4`, Cabal, `kubectl`, `helm`, `kind`, and `protoc` are baked into the `hostbootstrap`
+base image; no host-level Haskell toolchain is required for the `Container` model.
 
 ## Bring-up
 
@@ -72,7 +75,10 @@ the pulled base). Docker's layer cache makes subsequent builds fast.
 
 ## In-cluster worker daemon
 
-There is no host worker on Linux. The worker runs as a Kubernetes Deployment:
+Under the default `Container` model the worker runs as a Kubernetes Deployment (there is no
+host worker in this model). Under the `HostDaemon` model the same `Cpu` declaration instead
+runs the worker as a host-native systemd service, mirroring the launchd path on Apple. This
+section describes the `Container`-model in-cluster worker:
 
 - Two replicas (the kind cluster has three worker nodes)
 - `requiredDuringSchedulingIgnoredDuringExecution` pod anti-affinity on
@@ -90,9 +96,9 @@ The third worker node intentionally has no Worker pod assigned. A third replica 
 The operator does not interact with the worker process directly. To inspect:
 
 ```bash
-hostbootstrap run kubectl --kubeconfig /workspace/.data/runtime/daemon-substrate.kubeconfig \
+docker exec daemon-substrate kubectl --kubeconfig /workspace/.data/runtime/daemon-substrate.kubeconfig \
     get pods -l app=daemon-substrate-test-worker
-hostbootstrap run kubectl --kubeconfig /workspace/.data/runtime/daemon-substrate.kubeconfig \
+docker exec daemon-substrate kubectl --kubeconfig /workspace/.data/runtime/daemon-substrate.kubeconfig \
     logs -l app=daemon-substrate-test-worker --tail=100
 ```
 
@@ -141,7 +147,7 @@ Either the kind cluster has fewer than two worker nodes (it should have three), 
 anti-affinity rule is firing because both nodes already host a Worker pod. Inspect:
 
 ```bash
-hostbootstrap run kubectl --kubeconfig /workspace/.data/runtime/daemon-substrate.kubeconfig \
+docker exec daemon-substrate kubectl --kubeconfig /workspace/.data/runtime/daemon-substrate.kubeconfig \
     describe nodes
 ```
 
