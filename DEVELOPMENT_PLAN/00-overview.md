@@ -10,15 +10,20 @@
 ## Foundation
 
 The build, lifecycle, and bootstrap layer is provided by
-[`hostbootstrap`](https://github.com/Tuee22/hostbootstrap) — a host-installed Python CLI plus
-four prebuilt base container images. `daemon-substrate` declares its substrate behavior in a
-typed `hostbootstrap.dhall` at the repository root and inherits GHC 9.12 + Cabal + kube tools
-+ `protoc` + `ormolu` + `hlint` + a warm Haskell store from the base image. The phases below
-focus on the Haskell library, the in-cluster reconcilers, and the `hostbootstrap.dhall` plus
-thin project Dockerfile that wire the two layers together. What `daemon-substrate` explicitly
-does **not** implement: substrate detection, host-prereq install, restart-after-reboot
-container lifecycle, launchd/systemd unit creation or mutation, multi-language toolchain
-installation. See
+[`hostbootstrap`](https://github.com/Tuee22/hostbootstrap). In the target architecture this is a
+Haskell `hostbootstrap-core` library plus a thin Python bootstrapper and prebuilt base container
+images — not the earlier pure-Python CLI. `daemon-substrate` declares a **skeletal**
+`hostbootstrap.dhall` at the repository root (`project` + `dockerfile` +
+`resources {cpu, memory, storage}`) read by the bootstrapper, and inherits
+GHC 9.12 + Cabal + kube tools + `protoc` + `ormolu` + `hlint` + a warm Haskell store from the
+base image. The project ships one optparse-applicative binary that **extends the
+`hostbootstrap-core` command tree** and generates its own rich project-level and per-case test
+Dhall. The phases below focus on the Haskell library, the in-cluster reconcilers, and the project
+binary plus thin Dockerfile that wire the two layers together. What `daemon-substrate` explicitly
+does **not** implement: substrate detection, host-tool resolution, `ensure` reconcilers,
+restart-after-reboot container lifecycle, per-project Colima VM / kind cordoning, launchd/systemd
+unit creation or mutation, multi-language toolchain installation — those move into
+`hostbootstrap-core`. See
 [`../documents/engineering/hostbootstrap_integration.md`](../documents/engineering/hostbootstrap_integration.md).
 
 ## The buildout
@@ -145,6 +150,23 @@ Closure requires one `daemon-substrate-test test integration` invocation to crea
 tear down nine fresh clusters: each execution model crossed with each workflow archetype.
 
 Depends on Phase 7 because integration tests need the bootstrap-driven cluster bring-up.
+
+### Phase 9 — hostbootstrap-core integration and host-driven 3x3
+
+Invert `daemon-substrate` onto the `hostbootstrap-core` Haskell library. Consume
+`hostbootstrap-core` as a pinned `source-repository-package` git dependency; replace the custom
+recursive-descent CLI parser with an optparse-applicative tree that extends the core command
+tree; collapse `hostbootstrap.dhall` to the skeletal shape and generate the rich project/test
+Dhall from the binary; introduce `ClusterProfile` (production `.data/` vs test
+`.test_data/<case>/` + `dst-test-<model>-<archetype>`) with one centralized cluster-name /
+`hostPath` derivation; and make `test integration` an executable per-case 3x3 runner
+(`Daemon.Test.Integration.Runner` + `.Assertions`) with archetype assertions, guaranteed
+`finally` teardown, a `dst-test-` delete-guard, and a recursive `hostbootstrap` invocation per
+case honoring the resource budget (per-project Colima VM on Apple, kind cordoning on Linux).
+
+This phase is `Blocked` on the upstream `hostbootstrap-core` phases and on Phase 8 Sprint 8.8.
+The library under `src/Daemon/*` stays substrate-agnostic; all of the substrate-aware seam lives
+in the renamed project binary and the new `Daemon.Test.Integration.*` modules.
 
 ## Cohort obligations
 

@@ -11,8 +11,11 @@
 
 - One library (`daemon-substrate`) carries every public `Daemon.*` module that consumers depend
   on.
-- The test-harness executable (`daemon-substrate-test`) drives the full harness once Phase 8
-  lands.
+- The test-harness executable (`daemon-substrate-test`) **extends `hostbootstrap-core`** via
+  `optparse-applicative` (`runHostBootstrapCLI`). `hostbootstrap-core` is consumed as a pinned
+  `source-repository-package` git dependency in `cabal.project`.
+- New `Daemon.Test.Integration.*` modules (the nine-cluster runner plus archetype assertions)
+  back the executable's `test integration` verb.
 - Four test-suite stanzas: `daemon-substrate-unit`, `daemon-substrate-lifecycle`,
   `daemon-substrate-integration`, `daemon-substrate-haskell-style`. All use
   `type: exitcode-stdio-1.0`.
@@ -24,9 +27,11 @@
 Phase 1 has landed the buildable package scaffold:
 
 - `daemon-substrate.cabal` defines the library and all four test-suite stanzas.
-- `cabal.project` pins `with-compiler: ghc-9.12.4` (exact) and carries the `allow-newer`
+- `cabal.project` pins `with-compiler: ghc-9.12.4` (exact), carries the `allow-newer`
   carve-out plus the warm-store-compatible `tests`, `benchmarks`, `shared`, and
-  `optimization: 2` profile. `cabal.project.container` imports the root project and
+  `optimization: 2` profile, and declares the pinned `hostbootstrap-core`
+  `source-repository-package` git dependency the executable extends.
+  `cabal.project.container` imports the root project and
   `/opt/basecontainer/haskell-deps/cabal.project.freeze`; the Dockerfile uses that container
   project file, while native `HostBinary` / `HostDaemon` builds use the root project and do
   not import the warm store.
@@ -94,18 +99,21 @@ Phase 1 has landed the buildable package scaffold:
   6.3 expands the Dhall decoder coverage for the harness app records and the all-mode
   `LifecyclePolicy` file.
 
-The `Daemon.Cluster.*` plan-generation modules are implemented, and Phase 8 Sprint 8.6 adds
-the live runner interpreters for kind / kubectl / helm / Docker, Pulsar admin, MinIO admin,
-edge-port persistence, managed Apple edge-port forwarding, and live worker / orchestrator
-service loops. Phase 8 is reopened because `daemon-substrate-integration` must become the full
-3x3 matrix runner instead of a single-environment readiness gate.
+The `Daemon.Cluster.*` plan-generation modules are implemented. The target executable extends
+`hostbootstrap-core`'s optparse command tree rather than carrying a hand-rolled parser, and the
+`Daemon.Test.Integration.*` modules drive the nine-cluster `test integration` runner. Phase
+status for the `hostbootstrap-core` dependency, the optparse migration, and the executable 3x3
+runner is tracked in
+[`../../DEVELOPMENT_PLAN/phase-8-test-harness-integration.md`](../../DEVELOPMENT_PLAN/phase-8-test-harness-integration.md)
+and the `hostbootstrap-core`-integration phase; superseded surfaces are listed in
+[`../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md).
 
 ## Package shape
 
 ```
 daemon-substrate/
 ├── daemon-substrate.cabal
-├── cabal.project          # GHC pin (ghc-9.12.4, matching hostbootstrap base), allow-newer carve-outs, warm-store-compatible profile
+├── cabal.project          # GHC pin (ghc-9.12.4), allow-newer carve-outs, warm-store-compatible profile, hostbootstrap-core source-repository-package
 ├── cabal.project.container # container-only import of the hostbootstrap warm-store freeze
 ├── src/                   # library sources
 │   └── Daemon/
@@ -164,11 +172,15 @@ daemon-substrate/
 │       │   ├── FilesystemMinIO.hs
 │       │   ├── FilesystemHarbor.hs
 │       │   ├── FilesystemKubectl.hs
-│       │   └── MockEngine.hs
+│       │   ├── Matrix.hs          # the nine model × archetype cells
+│       │   ├── MockEngine.hs
+│       │   └── Integration/       # executable 3x3 harness; not consumer-facing
+│       │       ├── Runner.hs      # per-case generate Dhall + recursive hostbootstrap + finally teardown
+│       │       └── Assertions.hs  # per-archetype workflow assertions
 │       └── Proto/              # generated protobuf bindings
 ├── app/
 │   └── test/
-│       └── Main.hs        # daemon-substrate-test executable entrypoint
+│       └── Main.hs        # daemon-substrate-test entrypoint; runHostBootstrapCLI + project verbs
 ├── test/
 │   ├── unit/
 │   │   └── Main.hs
@@ -262,12 +274,39 @@ executable daemon-substrate-test
   main-is:          Main.hs
   hs-source-dirs:   app/test
   build-depends:    daemon-substrate
+                  , hostbootstrap-core
+                  , optparse-applicative
   ghc-options:      -threaded -rtsopts -with-rtsopts=-N
 ```
 
 This is the *only* executable in the repository. There is no `daemon-substrate` binary — the
 library is consumed by name, not invoked from the command line. The `daemon-substrate-test`
 executable is for the harness only.
+
+`Main.hs` extends the `hostbootstrap-core` command tree:
+`runHostBootstrapCLI "daemon-substrate-test" projectCommands`, where `projectCommands` is the
+`optparse-applicative` parser for the project verbs (`service`, `test`, `check-code`,
+`config schema`, `config render`). The core verbs (`ensure <tool>`, `cluster`, `config`) come
+from the library. See [../reference/cli_surface.md](../reference/cli_surface.md).
+
+## `hostbootstrap-core` dependency
+
+`hostbootstrap-core` is consumed as a pinned `source-repository-package` git dependency in
+`cabal.project`:
+
+```cabal
+source-repository-package
+  type:     git
+  location: https://github.com/Tuee22/hostbootstrap.git
+  tag:      <pinned-commit>
+  subdir:   hostbootstrap-core
+```
+
+The pin keeps the harness reproducible against a known core revision. `optparse-applicative` is a
+normal Hackage dependency of the executable. The library (`daemon-substrate`) does **not** depend
+on `hostbootstrap-core` or `optparse-applicative`; the dependency is confined to the test-harness
+executable so the consumer-facing library stays substrate-agnostic. See
+[../architecture/library_consumption_model.md](../architecture/library_consumption_model.md).
 
 ## Test-suite stanzas
 
@@ -303,14 +342,16 @@ test-suite daemon-substrate-haskell-style
 |-------|-------------------|
 | `daemon-substrate-unit` | pure logic: protobuf encode / decode, `WorkflowOwner` fold, `BootConfig` / `LiveConfig` / `LifecyclePolicy` decoders, cache eviction policies, `Store` semantics over `FilesystemMinIO`, `Consumer` dedup over `FilesystemPulsar`, reconciler tick over filesystem backends |
 | `daemon-substrate-lifecycle` | daemon spawned as a real process; SIGHUP / SIGTERM / SIGINT exercised; `/readyz` polled; `LiveConfig` reload validated. No cluster needed. |
-| `daemon-substrate-integration` | executable 3x3 model × workflow integration matrix; target behavior creates, asserts, and tears down nine fresh kind clusters per invocation |
+| `daemon-substrate-integration` | executable 3x3 model × workflow integration matrix via `Daemon.Test.Integration.*`; creates, asserts, and tears down nine isolated `dst-test-*` clusters per invocation |
 | `daemon-substrate-haskell-style` | governed-doc validator plus direct `Daemon.Proto.*` import-boundary gate |
 
 The integration suite is the one that depends on live clusters. It is invoked through
-`daemon-substrate-test test integration`; the target command delegates to
-`cabal test daemon-substrate-integration`, whose reopened Phase 8 work owns cluster lifecycle
-for all nine matrix cases. The current implementation still discovers a repo-local kubeconfig
-from a preexisting cluster; that is tracked in
+`daemon-substrate-test test integration`; the command drives the `Daemon.Test.Integration.*`
+runner, which generates per-case test Dhall, recursively invokes `hostbootstrap` per case, and
+owns guaranteed teardown of each `dst-test-*` cluster. See
+[test_isolation.md](test_isolation.md) and
+[../development/testing_strategy.md](../development/testing_strategy.md). Superseded surfaces are
+tracked in
 [`../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md).
 
 ## Why no sublibrary split
@@ -369,4 +410,6 @@ ships with compression `NONE` and only links a backend when a cohort enables it 
 - Library surface (which modules exist): [../architecture/library_consumption_model.md](../architecture/library_consumption_model.md)
 - CLI of the test executable: [../reference/cli_surface.md](../reference/cli_surface.md)
 - Testing strategy: [../development/testing_strategy.md](../development/testing_strategy.md)
+- Test isolation invariants: [test_isolation.md](test_isolation.md)
+- Binary-generated Dhall: [dhall_generation.md](dhall_generation.md)
 - hostbootstrap integration: [hostbootstrap_integration.md](hostbootstrap_integration.md)

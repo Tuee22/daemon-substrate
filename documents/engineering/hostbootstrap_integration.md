@@ -2,176 +2,161 @@
 
 **Status**: Authoritative source
 **Supersedes**: N/A
-**Referenced by**: [../README.md](../README.md), [../../README.md](../../README.md), [../../CLAUDE.md](../../CLAUDE.md), [../../AGENTS.md](../../AGENTS.md), [../development/local_dev.md](../development/local_dev.md), [../development/assistant_workflow.md](../development/assistant_workflow.md), [../development/testing_strategy.md](../development/testing_strategy.md), [../operations/cluster_bootstrap_runbook.md](../operations/cluster_bootstrap_runbook.md), [../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md), [../operations/linux_cpu_runbook.md](../operations/linux_cpu_runbook.md), [cabal_layout.md](cabal_layout.md), [cluster_topology.md](cluster_topology.md), [../reference/cli_surface.md](../reference/cli_surface.md), [../../DEVELOPMENT_PLAN/system-components.md](../../DEVELOPMENT_PLAN/system-components.md), [../../DEVELOPMENT_PLAN/phase-7-hostbootstrap-and-project-dockerfile.md](../../DEVELOPMENT_PLAN/phase-7-hostbootstrap-and-project-dockerfile.md)
+**Referenced by**: [../README.md](../README.md), [../../README.md](../../README.md), [../../CLAUDE.md](../../CLAUDE.md), [../../AGENTS.md](../../AGENTS.md), [../development/local_dev.md](../development/local_dev.md), [../development/assistant_workflow.md](../development/assistant_workflow.md), [../development/testing_strategy.md](../development/testing_strategy.md), [../operations/cluster_bootstrap_runbook.md](../operations/cluster_bootstrap_runbook.md), [../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md), [../operations/linux_cpu_runbook.md](../operations/linux_cpu_runbook.md), [cabal_layout.md](cabal_layout.md), [cluster_topology.md](cluster_topology.md), [dhall_generation.md](dhall_generation.md), [test_isolation.md](test_isolation.md), [../reference/cli_surface.md](../reference/cli_surface.md), [../../DEVELOPMENT_PLAN/system-components.md](../../DEVELOPMENT_PLAN/system-components.md), [../../DEVELOPMENT_PLAN/phase-7-hostbootstrap-and-project-dockerfile.md](../../DEVELOPMENT_PLAN/phase-7-hostbootstrap-and-project-dockerfile.md)
 
-> **Purpose**: Define how `daemon-substrate` sits on top of [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap) —
-> the substrate-keyed `hostbootstrap.dhall` shape this repository ships, the cluster handoff
-> contract, and the boundary between what `hostbootstrap` owns and what `daemon-substrate-test`
-> owns.
+> **Purpose**: Define how `daemon-substrate`'s test harness sits on top of
+> [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap) — the `hostbootstrap-core` Haskell
+> library it extends, the three-tier Dhall model, the skeletal repo-root `hostbootstrap.dhall`,
+> the per-project resource budget and Colima/kind cordoning, and the ownership boundary between
+> the thin Python bootstrapper, `hostbootstrap-core`, and the project binary.
 
 ## TL;DR
 
-- `hostbootstrap` is a `pipx`-installed Python CLI plus prebuilt base container images. It is
-  the canonical build, lifecycle, and bootstrap layer for this repository.
-- `daemon-substrate` ships one `hostbootstrap.dhall` with one entry per hardware substrate:
-  `AppleSilicon`, `LinuxCpu`, and `LinuxGpu`.
-- Each substrate has exactly one execution model: Apple Silicon uses `HostDaemon`; Linux CPU
-  and Linux GPU both use `Container`, with Linux GPU selecting the CUDA-flavored base image.
-- `hostbootstrap cluster up/down/delete` forwards the same project command every time:
-  `daemon-substrate-test cluster up/down/delete`. There are no explicit handoff commands in
-  the Dhall file.
-- `HostDaemon` adds one foreground daemon command. After `hostbootstrap cluster up`, the caller
-  runs `hostbootstrap daemon run` and owns that process. The caller must terminate it before
-  `hostbootstrap cluster down` or `hostbootstrap cluster delete`.
-- `hostbootstrap` does not install or edit launchd/systemd units, does not create restart-after-reboot
-  Docker containers, and does not provide a development mode. After reboot, the operator runs
-  `hostbootstrap cluster up` again.
-- `--force-target <apple-silicon|linux-cpu|linux-gpu>` lets one physical host exercise any
-  declared hostbootstrap target. It does not stand in for the inner 3x3 integration matrix.
+- [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap) is now a Haskell
+  **`hostbootstrap-core`** library plus a **thin Python bootstrapper**. The library owns
+  host-tool resolution, `ensure` reconcilers, substrate detection, cluster-lifecycle semantics,
+  and the optparse-applicative command tree. Python only reaches a fail-fast host minimum,
+  ensures Docker (provisioning a per-project Colima VM on Apple), builds the project container,
+  copies the binary to `./.build/`, and execs it.
+- `daemon-substrate` ships **one** test-harness binary, `daemon-substrate-test`, which **extends
+  `hostbootstrap-core`** through `runHostBootstrapCLI "daemon-substrate-test" projectCommands`.
+  The library is consumed as a pinned `source-repository-package` git dependency. See
+  [cabal_layout.md](cabal_layout.md).
+- **Three-tier Dhall.** The repo-root `hostbootstrap.dhall` is **skeletal** (`project`,
+  `dockerfile`, `resources {cpu, memory, storage}`) and is read by the Python bootstrapper. The
+  rich project-level Dhall (worker/orchestrator roles + cluster bootstrap) and the per-case test
+  Dhall are **generated by the binary**, which also emits its own schema. See
+  [dhall_generation.md](dhall_generation.md).
+- A **per-project resource budget** (`resources` in the skeletal Dhall) is enforced through a
+  per-project **Colima VM** on Apple and **kind node resource cordoning** on Linux.
+- `daemon-substrate-test test integration` is an executable 3x3 harness. One invocation
+  creates and tears down **nine isolated test clusters**, recursively invoking `hostbootstrap`
+  per case; production `.data` and any production cluster are never touched. See
+  [test_isolation.md](test_isolation.md).
 
 ## Current Status
 
-The substrate-keyed `hostbootstrap.dhall`, the single tini-wrapped project container
-`ENTRYPOINT`, the `daemon-substrate-test check-code` Dockerfile build gate, the plain
-`cluster up/down/delete` handoff, and the direct `daemon-substrate-test --model` debugging
-override are implemented repo-side. The old per-model spec files are removed. The target
-matrix is:
+The target architecture above is the shape `documents/` describes. Implementation status —
+`hostbootstrap-core` consumption, the optparse migration, generated Dhall, `ClusterProfile`
+isolation, and the executable nine-cluster runner — is tracked phase by phase in
+[`../../DEVELOPMENT_PLAN/phase-7-hostbootstrap-and-project-dockerfile.md`](../../DEVELOPMENT_PLAN/phase-7-hostbootstrap-and-project-dockerfile.md),
+[`../../DEVELOPMENT_PLAN/phase-8-test-harness-integration.md`](../../DEVELOPMENT_PLAN/phase-8-test-harness-integration.md),
+and the `hostbootstrap-core`-integration phase. Superseded surfaces (the old
+`H.Model.Container` / `HostDaemon` schema, `Cluster`/`NoCluster`, `Mounts`, `--force-target`,
+and the hand-rolled CLI parser) are listed in
+[`../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md).
 
-| Substrate entry | Model | Cluster lifecycle |
-|-----------------|-------|-------------------|
-| `AppleSilicon` | `HostDaemon` | `.build/daemon-substrate-test cluster up`; daemon foreground process via `hostbootstrap daemon run` |
-| `LinuxCpu` | `Container` | `docker run --rm <image> cluster up` |
-| `LinuxGpu` | `Container` | `docker run --rm <image> cluster up` with the CUDA-flavored base image |
-
-`cluster down` and `cluster delete` use the same target selection. For `HostDaemon`,
-`hostbootstrap` does not stop a daemon process; the operator, service manager, or test harness
-that invoked `hostbootstrap daemon run` owns termination.
-
-## Why hostbootstrap
+## Why hostbootstrap-core
 
 [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap) standardizes substrate detection,
-host prerequisite checks, the multi-language base toolchain (`ghc-9.12.4`, Cabal, kube tools,
-`protoc`, `ormolu`, `hlint`, warm Haskell store), and the Container / HostBinary / HostDaemon
-execution models. Adopting it keeps this repository to one typed Dhall config and one thin
-project Dockerfile. The same tool is consumed by [`infernix`](https://github.com/Tuee22/infernix)
-and [`jitML`](https://github.com/Tuee22/jitML), so the three-project family shares one
+host-tool resolution, the `ensure` reconcilers (`docker`, `colima`, `cuda`, `homebrew`, `ghc`,
+`tart` — each fail-fast on the wrong host), the multi-language base toolchain (`ghc-9.12.4`,
+Cabal, kube tools, `protoc`, `ormolu`, `hlint`, warm Haskell store), cluster-lifecycle
+semantics with kind resource cordoning, and the optparse command tree that projects extend.
+Consuming it as a library keeps this repository to one skeletal Dhall config, one thin project
+Dockerfile, and one binary that adds its own verbs on top of the shared core. The same library
+is consumed by [`infernix`](https://github.com/Tuee22/infernix) and
+[`jitML`](https://github.com/Tuee22/jitML), so the three-project family shares one
 infrastructure substrate.
 
-The canonical `hostbootstrap` documentation is the source of truth for its own schema,
-commands, and base image inventory:
+The canonical `hostbootstrap` documentation is the source of truth for the core library's
+module surface, the `ensure` reconcilers, the skeletal schema, and the base-image inventory:
 
-- [`~/hostbootstrap/README.md`](https://github.com/Tuee22/hostbootstrap/blob/main/README.md)
-- [`~/hostbootstrap/documents/engineering/schema.md`](https://github.com/Tuee22/hostbootstrap/blob/main/documents/engineering/schema.md)
-- [`~/hostbootstrap/hostbootstrap/dhall/package.dhall`](https://github.com/Tuee22/hostbootstrap/blob/main/hostbootstrap/dhall/package.dhall)
+- [`hostbootstrap/README.md`](https://github.com/Tuee22/hostbootstrap/blob/main/README.md)
+- [`hostbootstrap/documents/architecture/hostbootstrap_core_library.md`](https://github.com/Tuee22/hostbootstrap/blob/main/documents/architecture/hostbootstrap_core_library.md)
+- [`hostbootstrap/documents/architecture/python_haskell_boundary.md`](https://github.com/Tuee22/hostbootstrap/blob/main/documents/architecture/python_haskell_boundary.md)
+- [`hostbootstrap/documents/engineering/dhall_topology.md`](https://github.com/Tuee22/hostbootstrap/blob/main/documents/engineering/dhall_topology.md)
+- [`hostbootstrap/documents/engineering/resource_budgeting.md`](https://github.com/Tuee22/hostbootstrap/blob/main/documents/engineering/resource_budgeting.md)
 
-This document only covers how `daemon-substrate` uses those types.
+This document only covers how `daemon-substrate`'s test harness uses those surfaces.
 
 ## Ownership Boundary
 
-`hostbootstrap` owns substrate detection, host prerequisite checks, base-image selection,
-project artifact builds (`docker build` or templated `cabal install exe:<project>`), one-shot
-container runs, host-binary invocation, foreground `HostDaemon` invocation through
-`hostbootstrap daemon run`, and forwarding `cluster up/down/delete`.
+The seam has three actors. The substrate-agnostic library rule in
+[../architecture/library_consumption_model.md](../architecture/library_consumption_model.md) is
+preserved: consumer-facing `Daemon.*` modules never branch on host hardware. Everything below is
+a **test-harness** concern.
 
-`daemon-substrate` owns the Haskell library surface (`HasPulsar`, `HasMinIO`, `HasEngine`,
-`runWorker`, `runOrchestrator`, `BootConfig role app`), protobuf schemas, the
-`daemon-substrate-test` binary, and the in-cluster reconcilers: kind create, Helm install of
-Harbor / Pulsar / MinIO, ConfigMap render, Deployment apply, MinIO bucket seeding, and edge-port
-discovery.
+| Actor | Owns |
+|-------|------|
+| **Python bootstrapper** (thin) | reads the **skeletal `hostbootstrap.dhall`**; fail-fast host minimums; ensure Docker (provision a per-project **Colima** VM sized to the budget on Apple); build the project container with the `check-code` gate; copy `daemon-substrate-test` to `./.build/`; exec it |
+| **`hostbootstrap-core`** (Haskell library) | host-tool resolution, the `ensure` reconcilers, substrate detection, cluster-lifecycle semantics + kind resource cordoning, and the optparse command tree exposed through `runHostBootstrapCLI` |
+| **`daemon-substrate-test`** (project binary) | extends the core tree with project verbs (`service`, `test`, `check-code`); **generates** the rich project Dhall and per-case test Dhall and **emits its own schema** (`config schema` / `config render`); owns the in-cluster reconcilers (kind create, Helm install of Harbor / Pulsar / MinIO, ConfigMap render, Deployment apply, MinIO bucket seeding, edge-port discovery) and the executable 3x3 runner |
 
-The seam is intentionally narrow:
+The binary inherits the core verbs (`ensure <tool>`, `cluster`, `config`) and adds the project
+verbs. The project never hand-rolls bootstrap shell scripts, Compose files, or multi-language
+Dockerfile layers; substrate behavior is declared in the skeletal `hostbootstrap.dhall` and
+generated by the binary. See [../reference/cli_surface.md](../reference/cli_surface.md).
 
-| Outer model | Forwarded command | Additional hostbootstrap behavior |
-|-------------|-------------------|-----------------------------------|
-| `Container` | container entrypoint receives `cluster up/down/delete` | build image, run one-shot `docker run --rm` with declared mounts |
-| `HostBinary` | `.build/daemon-substrate-test cluster up/down/delete` | build native binary; no daemon process |
-| `HostDaemon` | `.build/daemon-substrate-test cluster up/down/delete` | build native binary; daemon runs only as foreground `hostbootstrap daemon run` |
+## Three-Tier Dhall
 
-The substrate-agnostic library rule in
-[../architecture/library_consumption_model.md](../architecture/library_consumption_model.md)
-is unchanged: consumer-facing `Daemon.*` modules do not branch on host hardware. The harness
-CLI chooses worker placement for validation only.
+| Tier | File(s) | Producer | Reader |
+|------|---------|----------|--------|
+| **Skeletal** | repo-root `hostbootstrap.dhall` | committed by hand | Python bootstrapper |
+| **Project** | rich roles + cluster bootstrap Dhall | generated by `daemon-substrate-test` | the binary's `service` / `cluster` verbs |
+| **Per-case test** | one Dhall per matrix case | generated by `daemon-substrate-test` | recursive `hostbootstrap` invocation per case |
 
-## Canonical `hostbootstrap.dhall`
+Only the skeletal tier is hostbootstrap-owned and human-edited. The binary emits its own schema
+and renders the lower two tiers; see [dhall_generation.md](dhall_generation.md) for the full
+schema/config contract.
 
-The repository root has exactly one project config:
+### Skeletal `hostbootstrap.dhall`
+
+The repo root has exactly one committed config, and it is intentionally small:
 
 ```dhall
-let projectContainer =
-      { dockerfile = "docker/Dockerfile" }
-
-let linuxContainer =
-      H.Model.Container
-        H.Container::{
-        , dockerfile = "docker/Dockerfile"
-        , mounts =
-          [ H.Mount::{ host = "./.data", container = "/workspace/.data" }
-          , H.Mount::{ host = "/var/run/docker.sock", container = "/var/run/docker.sock" }
-          ]
-        }
-
-let hostDaemon =
-      H.Model.HostDaemon
-        H.HostDaemon::{
-        , daemon = "service --role worker --config dhall/worker.dhall"
-        , container = Some projectContainer
-        }
-
-in  H.config
-      { project = "daemon-substrate-test"
-      , substrates =
-        [ H.entry H.Substrate.AppleSilicon (H.cluster hostDaemon)
-        , H.entry H.Substrate.LinuxCpu (H.cluster linuxContainer)
-        , H.entry H.Substrate.LinuxGpu (H.cluster linuxContainer)
-        ]
-      }
+{ project = "daemon-substrate-test"
+, dockerfile = "docker/Dockerfile"
+, resources =
+  { cpu = 4
+  , memory = "8Gi"
+  , storage = "40Gi"
+  }
+}
 ```
 
-`project` matches the command name. Containers expose that command as the tini-wrapped
-entrypoint, and host-native models build `exe:daemon-substrate-test` into
-`.build/daemon-substrate-test`.
+`project` matches the binary name. `dockerfile` points the Python bootstrapper at the thin
+project Dockerfile. `resources` is the per-project budget: the cap the Colima VM is sized to on
+Apple and the cap kind nodes are cordoned to on Linux. There is no execution-model keying, no
+`H.Model.Container` / `HostDaemon`, no `Cluster` / `NoCluster`, no `Mounts`, and no
+`--force-target` — those are removed and tracked in
+[`../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md).
 
-## Target Selection
+## Resource Budget, Colima, And Cordoning
 
-Normal operation uses the detected host substrate:
+The `resources` record is the single source for the per-project budget:
 
-| Detected host | Selected entry | Harness model |
-|---------------|----------------|---------------|
-| macOS arm64 Apple Silicon | `AppleSilicon` | `HostDaemon` |
-| Linux without NVIDIA runtime | `LinuxCpu` | `Container` |
-| Linux with NVIDIA runtime | `LinuxGpu` | `Container` |
+- **Apple** — the Python bootstrapper ensures a **per-project Colima VM** sized to
+  `resources {cpu, memory, storage}`. The VM is the Docker runtime for kind; nothing else
+  competes for those cores or that memory, so the harness's clusters are bounded by the budget
+  without touching the rest of the host.
+- **Linux** — Docker runs natively. `hostbootstrap-core` enforces the budget by **kind node
+  resource cordoning**: kind nodes are capped to the declared CPU/memory so the in-cluster
+  workloads cannot exceed the project's slice of the host.
 
-For validation, every lifecycle command that builds or invokes a target accepts
-`--force-target`. This lets one physical host run the three declared hostbootstrap targets:
+The budget is verified before bring-up; `hostbootstrap-core`'s `resource_budgeting` doctrine
+([upstream](https://github.com/Tuee22/hostbootstrap/blob/main/documents/engineering/resource_budgeting.md))
+owns the spare-resource check. See [cluster_topology.md](cluster_topology.md) for how cordoning
+shapes the single-worker-per-case topology.
 
-```bash
-hostbootstrap cluster up --force-target apple-silicon
-hostbootstrap cluster down --force-target apple-silicon
-hostbootstrap cluster up --force-target linux-cpu
-hostbootstrap cluster down --force-target linux-cpu
-hostbootstrap cluster up --force-target linux-gpu
-hostbootstrap cluster down --force-target linux-gpu
-```
+## Build And Run Model
 
-The mock engine remains CPU-only; `LinuxGpu` exists to validate the Linux GPU hostbootstrap
-target, NVIDIA runtime prerequisite, CUDA-flavored base-image path, and container lifecycle,
-not to exercise CUDA computation in this repository.
+`./.build/` always holds a host-runnable `daemon-substrate-test` binary:
 
-## Base Image And Toolchain
+- **Linux** — the project container builds the binary (same glibc family as the host), and the
+  Python bootstrapper copies it out to `./.build/` to run on the host.
+- **Apple** — a Linux ELF cannot exec on macOS, so the binary is built natively on the host
+  (Python ensures `ghc` via Homebrew through the `ensure ghc` reconciler). Tart is **build-only**
+  (Swift/Metal) and never a runtime.
 
-`hostbootstrap` selects the base tag from the target substrate. `AppleSilicon` and `LinuxCpu`
-use CPU-flavored base images for container artifacts; `LinuxGpu` uses the CUDA-flavored base
-for the one-shot project container. The base ships
-`ghc-9.12.4`, Cabal, kube tools (`kubectl`, `helm`, `kind`), `protoc`, `ormolu`, `hlint`, and
-a warm Haskell store.
-
-The GHC pin for this repository is exactly **`ghc-9.12.4`**, matching the base. The warm-store
-`cabal.project.freeze` import applies to **container builds only**; host-native builds do not
-use the warm store. See [cabal_layout.md](cabal_layout.md).
+The base image bakes the skeletal `hostbootstrap` bootstrapper and warms `hostbootstrap-core`
+dependencies into the frozen Cabal store, so the project container compiles only
+`daemon-substrate`'s own modules. See [cabal_layout.md](cabal_layout.md).
 
 ## Project Dockerfile
 
-`docker/Dockerfile` is intentionally thin:
+`docker/Dockerfile` is a thin `FROM ${BASE_IMAGE}` shell that builds the binary and runs the
+`check-code` gate:
 
 ```dockerfile
 # check=skip=InvalidDefaultArgInFrom
@@ -186,40 +171,24 @@ RUN daemon-substrate-test check-code
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/daemon-substrate-test"]
 ```
 
-The Dockerfile carries no default `CMD`. `hostbootstrap` forwards the command arguments for
-`run` and `cluster` invocations. It also does not declare restart policy; containers are
-one-shot `docker run --rm` invocations.
+The Dockerfile carries no default `CMD`; the Python bootstrapper copies the built binary to
+`./.build/` and execs it on the host with the requested verb.
 
 ## Operator Entrypoints
 
-`hostbootstrap` is installed via `pipx` only:
+The Python bootstrapper is the operator's entry. Per clone:
 
 ```bash
-pipx install "git+https://github.com/tuee22/hostbootstrap.git#egg=hostbootstrap"
-```
-
-Per clone:
-
-```bash
-hostbootstrap doctor
+hostbootstrap ensure docker
 hostbootstrap cluster up
-hostbootstrap daemon run
+hostbootstrap config schema
 hostbootstrap cluster down
-hostbootstrap cluster delete
 ```
 
-`hostbootstrap cluster up` builds the selected target if needed and forwards
-`daemon-substrate-test cluster up`. `hostbootstrap cluster down` forwards
-`daemon-substrate-test cluster down`. `hostbootstrap cluster delete` forwards
-`daemon-substrate-test cluster delete`. `.data/` is preserved by all outer lifecycle commands.
-For the AppleSilicon `HostDaemon` target, run `hostbootstrap daemon run` in a separate terminal,
-test harness process, launchd unit, or systemd unit after cluster bring-up. Stop that foreground
-process before cluster teardown.
-
-This repository intentionally does not rely on reboot persistence from hostbootstrap. After a
-reboot, run `hostbootstrap cluster up` again and restart any foreground `hostbootstrap daemon run`
-process. Operators who want automatic boot-time startup can create their own launchd/systemd unit
-outside this repository and outside hostbootstrap.
+`hostbootstrap cluster up` runs the Python flow (fail-fast minimum → ensure Docker → build →
+copy → exec) and delegates the inner reconciliation to `daemon-substrate-test`. `.data/` and any
+production cluster are preserved by all lifecycle commands. After a reboot the operator runs
+`hostbootstrap cluster up` again; nothing is installed as a reboot-persistent service.
 
 ## What This Repository Does Not Ship
 
@@ -227,13 +196,13 @@ outside this repository and outside hostbootstrap.
 - Compose files
 - multi-language project Dockerfile layers
 - per-model `hostbootstrap-*.dhall` files
-- explicit handoff commands in Dhall
-- launchd/systemd unit files or code that edits them
-- restart-after-reboot Docker containers
-- hostbootstrap development mode
+- the old execution-model-keyed `hostbootstrap.dhall` (`H.Model.Container` / `HostDaemon`,
+  `Cluster` / `NoCluster`, `Mounts`, `--force-target`)
+- a hand-rolled CLI parser (the binary extends `hostbootstrap-core`'s optparse tree)
+- launchd/systemd unit files or reboot-persistent containers
 
 See [`legacy-tracking-for-deletion.md`](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md)
-for obsolete surfaces that were removed during earlier phases.
+for obsolete surfaces queued for removal.
 
 ## Cross-references
 
@@ -241,6 +210,8 @@ for obsolete surfaces that were removed during earlier phases.
   [../operations/linux_cpu_runbook.md](../operations/linux_cpu_runbook.md),
   [../operations/cluster_bootstrap_runbook.md](../operations/cluster_bootstrap_runbook.md)
 - First-run developer flow: [../development/local_dev.md](../development/local_dev.md)
+- Dhall schema/config contract: [dhall_generation.md](dhall_generation.md)
+- Test isolation invariants: [test_isolation.md](test_isolation.md)
 - Cluster topology: [cluster_topology.md](cluster_topology.md)
 - Cabal layout: [cabal_layout.md](cabal_layout.md)
 - Bootstrap config phase: [../../DEVELOPMENT_PLAN/phase-7-hostbootstrap-and-project-dockerfile.md](../../DEVELOPMENT_PLAN/phase-7-hostbootstrap-and-project-dockerfile.md)

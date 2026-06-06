@@ -23,6 +23,14 @@ worker-cardinality and Harbor-publication contract was corrected after closure.
 - Replace the direct kind image-load publication path with per-cluster Harbor deployment plus
   harness image upload. The host/project artifact may be reused, but each fresh cluster must
   receive its own Harbor deployment and image upload.
+- Move cluster-name and `hostPath` derivation behind a single `ClusterProfile`-aware helper so
+  the production profile (`.data/` + fixed name) and the test profile
+  (`.test_data/<case>/` + `dst-test-<model>-<archetype>`) share one source of truth. The
+  duplicate derivations currently spread across `Daemon.Cluster.Runner` and
+  `Daemon.Cluster.Kind` are tracked for removal in
+  [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md). Full execution of the
+  profile-driven, per-case isolated bring-up lands with the `hostbootstrap-core` inversion in
+  [phase-9-hostbootstrap-core-integration-and-host-driven-3x3.md](phase-9-hostbootstrap-core-integration-and-host-driven-3x3.md).
 
 ## Phase Objective
 
@@ -199,6 +207,13 @@ coordinator and worker workloads roll out.
 
 Sprint 6.4 is not implemented in the current repo state. The existing chart and Haskell
 defaults still contain the old two-worker topology and direct kind image-load publication path.
+
+The per-case `ClusterProfile` derivation and `.test_data/<case>/` isolation that make the
+one-worker, Harbor-upload topology safe to run nine times in one invocation depend on the
+`hostbootstrap-core` inversion. That work is owned by
+[phase-9-hostbootstrap-core-integration-and-host-driven-3x3.md](phase-9-hostbootstrap-core-integration-and-host-driven-3x3.md);
+Sprint 6.4 lands the chart and workload-default corrections, and Phase 9 wires them into the
+profile-driven host-driven runner.
 
 ## Documentation Requirements
 

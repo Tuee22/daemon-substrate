@@ -159,14 +159,18 @@ inference daemon must not create topics.
 ## Foundation
 
 `daemon-substrate`'s build, lifecycle, and bootstrap layer is provided by
-[`hostbootstrap`](https://github.com/Tuee22/hostbootstrap) — a host-installed Python CLI plus
-prebuilt base container images that standardize host detection, host-prereq install,
-multi-language toolchain (`ghc-9.12.4`, Cabal, kube tools, `protoc`, `ormolu`, `hlint`, warm Haskell
-store), and the Container / HostBinary / HostDaemon execution models. `daemon-substrate` declares
-its harness as three substrate entries in the single typed `hostbootstrap.dhall` at the
-repository root; the cluster operator entrypoint is `hostbootstrap cluster up`, and HostDaemon
-workers run in the foreground with `hostbootstrap daemon run`. The boundary between what
-`hostbootstrap` owns and what `daemon-substrate-test` owns is described in
+[`hostbootstrap`](https://github.com/Tuee22/hostbootstrap) — a Haskell `hostbootstrap-core`
+library plus a thin Python bootstrapper and prebuilt base container images that standardize host
+detection, host-tool resolution and `ensure` reconcilers, the multi-language toolchain
+(`ghc-9.12.4`, Cabal, kube tools, `protoc`, `ormolu`, `hlint`, warm Haskell store), cluster
+lifecycle, and per-project resource budgeting (a Colima VM on Apple, kind node cordoning on
+Linux). `daemon-substrate` ships **one project binary that extends the `hostbootstrap-core`
+optparse-applicative command tree**; it declares a skeletal `hostbootstrap.dhall` at the
+repository root (`project` + `dockerfile` + `resources {cpu, memory, storage}`) read by the
+bootstrapper and generates its own rich project-level and per-case test Dhall. The cluster
+operator entrypoint is `hostbootstrap cluster up`, and host workers run in the foreground after
+bring-up. The boundary between what `hostbootstrap-core` owns and what the project binary owns is
+described in
 [`documents/engineering/hostbootstrap_integration.md`](documents/engineering/hostbootstrap_integration.md).
 
 `hostbootstrap` is installed via `pipx` only:
@@ -186,6 +190,13 @@ The substrate-keyed `hostbootstrap.dhall`, the tini-wrapped container `ENTRYPOIN
 `daemon-substrate-test check-code` build gate, the plain `cluster up/down/delete` handoff, and
 the substrate target map are implemented repo-side. The full executable 3×3 integration matrix
 and one-worker cluster topology are reopened work tracked in `DEVELOPMENT_PLAN/`.
+
+The `hostbootstrap-core` inversion described above — consuming `hostbootstrap-core` as a pinned
+git dependency, replacing the custom CLI parser with an optparse-applicative tree that extends the
+core command tree, the skeletal + binary-generated three-tier Dhall, the `ClusterProfile` /
+`.test_data` test isolation, and the host-driven per-case 3×3 runner — is the target architecture
+tracked as Phase 9 in `DEVELOPMENT_PLAN/`. It is `Blocked` on the upstream `hostbootstrap-core`
+phases; the code refactor has not landed yet.
 
 ## License
 

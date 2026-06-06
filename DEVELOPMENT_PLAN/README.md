@@ -27,8 +27,9 @@ The phases below focus on the Haskell library, the in-cluster reconcilers, and t
 | 4 | [Engine + mock + protos + audit](phase-4-engine-mock-protos-audit.md) | Done |
 | 5 | [Base loops (worker, orchestrator, bridge, bootstrap, reconciler)](phase-5-base-loops.md) | Done |
 | 6 | [Cluster bring-up tree (kind cluster and Helm chart)](phase-6-cluster-bringup-tree.md) | Active |
-| 7 | [hostbootstrap.dhall and project Dockerfile](phase-7-hostbootstrap-and-project-dockerfile.md) | Done |
+| 7 | [hostbootstrap.dhall and project Dockerfile](phase-7-hostbootstrap-and-project-dockerfile.md) | Active |
 | 8 | [Test harness integration](phase-8-test-harness-integration.md) | Active |
+| 9 | [hostbootstrap-core integration and host-driven 3x3](phase-9-hostbootstrap-core-integration-and-host-driven-3x3.md) | Blocked |
 
 ## Governance
 

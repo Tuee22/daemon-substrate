@@ -5,90 +5,95 @@
 **Referenced by**: [../README.md](../README.md), [cluster_bootstrap_runbook.md](cluster_bootstrap_runbook.md), [apple_silicon_runbook.md](apple_silicon_runbook.md), [../development/local_dev.md](../development/local_dev.md), [../engineering/hostbootstrap_integration.md](../engineering/hostbootstrap_integration.md)
 
 > **Purpose**: Linux CPU operator workflow for the `daemon-substrate-test` harness —
-> prerequisites, project container build, one-shot cluster handoff, in-cluster worker lifecycle,
-> and recovery guidance.
+> prerequisites, the in-container build + copy-out model, kind node resource cordoning to the
+> per-project budget, in-cluster worker lifecycle, and recovery guidance.
 
 ## TL;DR
 
-- Linux CPU selects the `LinuxCpu` entry in `hostbootstrap.dhall`, which uses the `Container`
-  model.
-- `hostbootstrap cluster up` builds a thin project image `FROM` the hostbootstrap base image and
-  runs `docker run --rm <image> cluster up` through the tini-wrapped
-  `daemon-substrate-test` entrypoint.
-- The container is not a reboot-persistent service and does not remain resident for diagnostics.
-  Run `hostbootstrap cluster up` after reboot.
-- The worker runs inside kind as a single Deployment replica that owns the node resources for
-  that matrix case.
-- Linux GPU hosts select the separate `LinuxGpu` entry, which also uses the `Container` model
-  but builds from the CUDA-flavored hostbootstrap base image.
+- On Linux the binary is built **in the project container** (same glibc family as the host) and
+  **copied out to `./.build/`** by the Python bootstrapper to run on the host. `./.build/` always
+  holds a host-runnable binary.
+- `hostbootstrap cluster up` reads the skeletal `hostbootstrap.dhall` (`project`, `dockerfile`,
+  `resources`), ensures Docker, builds the thin project image `FROM` the hostbootstrap base, runs
+  `check-code`, copies the binary out, and execs the inner `cluster up`.
+- The per-project **resource budget** is enforced via **kind node resource cordoning** to the
+  declared CPU/memory.
+- The worker runs inside kind as a single Deployment replica that owns the node resources for that
+  case.
+- On a GPU host the CUDA `ensure` reconciler runs and the CUDA-flavored base image is selected;
+  the mock engine still performs no CUDA computation.
 
 ## Prerequisites
 
 Minimal pre-existing host state:
 
 - Ubuntu 24.04 or a compatible Linux distribution
-- `pipx` with `hostbootstrap` installed via `pipx`
+- passwordless `sudo`
 - Docker Engine with socket access for the invoking user
 
-`hostbootstrap doctor` verifies Docker reachability and reports actionable errors. The project
-container carries `ghc-9.12.4`, Cabal, `kubectl`, `helm`, `kind`, `protoc`, `ormolu`, `hlint`,
-and the warm Haskell store via the hostbootstrap base image.
+The Python bootstrapper reaches a fail-fast minimum, then reconciles Docker:
+
+```bash
+hostbootstrap ensure docker
+```
+
+The project container carries `ghc-9.12.4`, Cabal, `kubectl`, `helm`, `kind`, `protoc`, `ormolu`,
+`hlint`, and the warm Haskell store via the hostbootstrap base image.
 
 ## Bring-up
 
 ```bash
-hostbootstrap doctor
+hostbootstrap ensure docker
 hostbootstrap cluster up
 ```
 
-For forced validation:
+On Linux, `cluster up`:
 
-```bash
-hostbootstrap cluster up --force-target linux-cpu
-```
+1. Reads the skeletal `hostbootstrap.dhall` and verifies the resource budget.
+2. Builds the project image from `docker/Dockerfile` (`FROM ${BASE_IMAGE}`) and runs the
+   `check-code` gate.
+3. Copies the built `daemon-substrate-test` binary out to `./.build/`.
+4. Execs the inner `cluster up`, which generates the project Dhall, creates kind with **node
+   resources cordoned to the budget**, deploys Harbor / Pulsar / MinIO, uploads the harness image
+   through Harbor, rolls out the coordinator/orchestrator, and rolls out the single in-cluster
+   worker.
 
-On Linux CPU, `cluster up`:
+The first build can take several minutes; the Docker layer cache makes subsequent builds faster.
 
-1. Builds `daemon-substrate-test:linux-cpu-<arch>` from `docker/Dockerfile`.
-2. Runs the image as a one-shot container with `./.data` and `/var/run/docker.sock` mounted.
-3. Forwards `cluster up` to the project entrypoint.
-4. Lets the inner reconciler create kind, deploy Harbor / Pulsar / MinIO, upload the harness
-   image through Harbor, roll out the coordinator/orchestrator, and roll out the single
-   in-cluster worker.
+## Resource cordoning
 
-The first build can take several minutes. Docker layer cache makes subsequent builds faster.
+`hostbootstrap-core` cordons kind node resources to the `resources {cpu, memory}` record in the
+skeletal `hostbootstrap.dhall` so in-cluster workloads stay inside the project's slice of the
+host. Because the worker owns the resources of its node, the budget is what makes
+one-worker-per-case a meaningful test. See
+[../engineering/hostbootstrap_integration.md](../engineering/hostbootstrap_integration.md).
 
 ## In-cluster Worker
 
 Under the Linux CPU `Container` target the worker runs as a Kubernetes Deployment:
 
 - one replica
-- `worker.dhall` mounted from `configmap-worker`
-- subscription to `test.batch.linux-cpu` in `Shared` mode
+- `worker.dhall` mounted from `configmap-worker` (rendered from the generated project Dhall)
+- subscription to the work topic in `Shared` mode
 
-The operator normally uses the harness status/readiness commands rather than attaching to a
-resident container:
-
-```bash
-hostbootstrap run cluster status
-daemon-substrate-test test integration
-```
-
-`daemon-substrate-test test integration` owns the full 3x3 model/workflow matrix and creates
-fresh clusters for its cases; it is not just a readiness check against this one Linux CPU
-cluster.
-
-## Linux GPU Target
-
-A GPU-capable Linux host normally selects `LinuxGpu`, not `LinuxCpu`. In this repository the
-mock engine performs no CUDA work; the `LinuxGpu` target validates the Linux GPU prerequisite
-path, CUDA-flavored hostbootstrap base selection, and the same one-shot container lifecycle as
-Linux CPU. To exercise it:
+The operator normally uses status/readiness commands rather than attaching to a container:
 
 ```bash
-hostbootstrap cluster up --force-target linux-gpu
-hostbootstrap cluster down --force-target linux-gpu
+./.build/daemon-substrate-test cluster status
+./.build/daemon-substrate-test test integration
 ```
+
+`test integration` owns the full 3x3 model/workflow matrix and creates isolated `dst-test-*`
+clusters for its cases; it is not just a readiness check against this one cluster, and it never
+touches a production cluster or `./.data/`. See
+[../engineering/test_isolation.md](../engineering/test_isolation.md).
+
+## GPU Host
+
+A GPU-capable Linux host runs `hostbootstrap ensure cuda` and selects the CUDA-flavored
+hostbootstrap base image. In this repository the mock engine performs no CUDA work; the GPU path
+validates the CUDA `ensure` reconciler, the NVIDIA runtime prerequisite, and the CUDA-flavored
+base selection, with the same in-container build + copy-out and kind cordoning as Linux CPU.
 
 ## Teardown
 
@@ -100,8 +105,8 @@ hostbootstrap cluster delete
 Preserved state:
 
 - `./.data/` durable cluster state
-- local Docker layer cache
-- installed Docker / OS prerequisites
+- `./.build/` host-runnable binary
+- local Docker layer cache and installed Docker / OS prerequisites
 
 `cluster delete` is the thorough inner teardown path but still preserves `./.data/`.
 
@@ -113,28 +118,26 @@ Preserved state:
 hostbootstrap cluster up
 ```
 
-Operators who want boot-time automation can create their own systemd unit outside
-`hostbootstrap`.
+Operators who want boot-time automation can create their own systemd unit outside `hostbootstrap`.
 
 ## Recovery From Common Failures
 
 ### Docker socket access denied
 
-`hostbootstrap doctor` verifies socket access early and reports the failing Docker condition.
-Resolution is operator-specific, such as fixing Docker group membership and starting a new login
-session.
+`ensure docker` verifies socket access early and reports the failing condition. Resolution is
+operator-specific, such as fixing Docker group membership and starting a new login session.
 
 ### Project image build failure
 
-Re-run `hostbootstrap cluster up`; Docker preserves successful layers. If the base image needs
-to be rebuilt locally, use `hostbootstrap cluster up --build-base --base-context ~/hostbootstrap`.
+Re-run `hostbootstrap cluster up`; Docker preserves successful layers.
 
 ### Worker replicas stuck `Pending`
 
-The Linux CPU kind topology must have enough worker nodes for the anti-affinity rule. Run:
+The kind topology must have enough capacity within the cordoned budget for the anti-affinity rule.
+Check:
 
 ```bash
-hostbootstrap run cluster status
+./.build/daemon-substrate-test cluster status
 ```
 
 If topology is wrong, run `hostbootstrap cluster down` followed by `hostbootstrap cluster up`.

@@ -35,6 +35,8 @@ documents/
 | Cluster topology | [engineering/cluster_topology.md](engineering/cluster_topology.md) |
 | Mock engine | [engineering/mock_engine.md](engineering/mock_engine.md) |
 | hostbootstrap integration | [engineering/hostbootstrap_integration.md](engineering/hostbootstrap_integration.md) |
+| Binary-generated Dhall | [engineering/dhall_generation.md](engineering/dhall_generation.md) |
+| Test isolation invariants | [engineering/test_isolation.md](engineering/test_isolation.md) |
 | Assistant workflow | [development/assistant_workflow.md](development/assistant_workflow.md) |
 | Local development | [development/local_dev.md](development/local_dev.md) |
 | Testing strategy | [development/testing_strategy.md](development/testing_strategy.md) |

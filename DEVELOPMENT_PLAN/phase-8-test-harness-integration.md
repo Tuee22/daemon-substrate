@@ -40,8 +40,21 @@ records the 3×3 execution-model × workflow-archetype audit map.
 - Each matrix case must deploy Harbor / Pulsar / MinIO, upload the already-built harness image
   through Harbor, deploy the two-replica coordinator/orchestrator and exactly one worker, run
   workflow assertions, verify status, and tear the cluster down before the next case.
+- Each case must run under the **test `ClusterProfile`** — a `dst-test-<model>-<archetype>`
+  cluster name and a `.test_data/<case>/` runtime tree — so a case can never touch the
+  production `.data/` cluster, and teardown is wrapped in a guaranteed `finally` with a
+  `dst-test-` delete-guard so a partial run cannot delete the production cluster.
+- The runner must invoke `hostbootstrap` recursively per case (the project binary extending
+  `hostbootstrap-core`) and consume the per-case Dhall the binary generates, rather than a
+  single static `dhall/*.dhall` set.
 - `test all` must run unit tests through the compiled binary and then run the full integration
   matrix without requiring a preexisting cluster.
+
+The `ClusterProfile`, `.test_data` isolation, binary-generated per-case Dhall, and recursive
+`hostbootstrap-core` invocation depend on the upstream `hostbootstrap` re-baseline and are owned
+by [phase-9-hostbootstrap-core-integration-and-host-driven-3x3.md](phase-9-hostbootstrap-core-integration-and-host-driven-3x3.md).
+Sprint 8.8 lands the in-repo runner skeleton against the current bootstrap shape; Phase 9
+rewires it onto the host-driven, profile-isolated model once `hostbootstrap-core` lands.
 
 ## Phase Objective
 
@@ -451,6 +464,12 @@ cluster status, and tears the cluster down before the next case.
 
 Sprint 8.8 is not implemented in the current repo state. The existing integration stanza still
 checks a single preexisting live environment rather than owning nine fresh cluster lifecycles.
+
+Sprint 8.8 owns the in-repo runner against the current bootstrap shape. The
+`ClusterProfile` + `.test_data/<case>/` isolation, the centralized cluster-name/`hostPath`
+derivation, and the recursive `hostbootstrap-core` invocation per case are owned by
+[phase-9-hostbootstrap-core-integration-and-host-driven-3x3.md](phase-9-hostbootstrap-core-integration-and-host-driven-3x3.md),
+which is blocked on the upstream `hostbootstrap-core` phases.
 
 ## Documentation Requirements
 

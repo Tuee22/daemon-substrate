@@ -42,9 +42,15 @@ Mismatched compiler pins are not supported.
 Consumers also depend on `hostbootstrap` for their own build, lifecycle, and bootstrap layer.
 The dependency is at the *infrastructure* layer, not the Haskell-library layer:
 `daemon-substrate`'s library surface is unchanged whether or not a consumer uses
-`hostbootstrap`. See
-[`../engineering/hostbootstrap_integration.md`](../engineering/hostbootstrap_integration.md)
-for how `daemon-substrate` itself adopts `hostbootstrap`.
+`hostbootstrap`. `daemon-substrate`'s **own test harness** goes further and *extends*
+`hostbootstrap-core` (the Haskell core library) — the `daemon-substrate-test` binary consumes
+`hostbootstrap-core` as a pinned `source-repository-package` git dependency and adds its project
+verbs onto the core optparse command tree. That extension is confined to the test-harness
+executable; the consumer-facing `daemon-substrate` library does **not** depend on
+`hostbootstrap-core`. See
+[`../engineering/hostbootstrap_integration.md`](../engineering/hostbootstrap_integration.md) for
+how `daemon-substrate`'s harness adopts `hostbootstrap-core`, and
+[`../engineering/cabal_layout.md`](../engineering/cabal_layout.md) for the dependency placement.
 
 Alternative mechanisms — git submodules, vendoring with copy-paste, a published Hackage / git
 dependency — are not part of the supported contract. If they become necessary, the plan changes
@@ -277,15 +283,17 @@ consumer-domain timescales.
 
 The library code is substrate-agnostic; the *test harness* that proves the library works is
 necessarily aware of the execution model for cluster bootstrap (`Container` project image vs
-`HostBinary` / `HostDaemon` native host build). The harness declares one substrate entry per
-hostbootstrap target in the single root `hostbootstrap.dhall`: Apple Silicon `HostDaemon`,
-Linux CPU `Container`, and Linux GPU `Container` with the CUDA-flavored base image. The harness lives outside consumer-facing
-`src/Daemon/*` code — under `hostbootstrap.dhall`, `docker/Dockerfile`,
-`chart/`, `src/Daemon/Cluster/*`, and the `daemon-substrate-test` executable. The host-specific
-bring-up itself is delegated to
+`HostBinary` / `HostDaemon` native host build) and is the only substrate-aware seam in the repo.
+The harness is the single binary `daemon-substrate-test`, which **extends `hostbootstrap-core`**
+via optparse-applicative and generates its own rich project and per-case test Dhall (the
+repo-root `hostbootstrap.dhall` is skeletal — `project`, `dockerfile`, `resources`). The binary,
+its `ClusterProfile`-driven cluster/Colima/3x3 logic, the skeletal Dhall, `docker/Dockerfile`,
+`chart/`, and `src/Daemon/Cluster/*` are all **test-harness** concerns living outside
+consumer-facing `src/Daemon/*` code. Host preparation and the build/run model are delegated to
 [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap); see
 [`../engineering/hostbootstrap_integration.md`](../engineering/hostbootstrap_integration.md).
-Consumers do not run the harness; it exists for `daemon-substrate`'s own validation. See
+Consumers do not run the harness and do not depend on `hostbootstrap-core` through this library;
+the harness exists for `daemon-substrate`'s own validation. See
 [../development/testing_strategy.md](../development/testing_strategy.md).
 
 ## Cross-references
