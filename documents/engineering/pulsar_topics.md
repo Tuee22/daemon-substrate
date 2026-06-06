@@ -18,8 +18,9 @@
   suite (one each of `Ephemeral`, `ContinuousWithArchive`, `FiniteSession`,
   `OnlineLearning`).
 - Worker fan-out and orchestrator fan-in / fan-back are all `Shared` mode. Multiple
-  orchestrator replicas and multiple worker replicas consume the same subscription in
-  parallel; Pulsar's `Shared` semantics prevent work duplication.
+  orchestrator replicas consume the same subscription in parallel; the harness worker is
+  cardinality-one for each matrix case because it owns the resources of the whole node.
+  Pulsar's `Shared` semantics still prevent duplicate delivery.
 - `test.request` is **the public ingress topic** — upstream users of the overall compute
   workflow publish here directly. The substrate exposes no separate HTTP / gRPC / REST
   surface.
@@ -32,7 +33,7 @@
 | Topic | Producer | Subscriber | Subscription mode | Partitions | Payload |
 |-------|----------|------------|-------------------|------------|---------|
 | `test.request` | test driver (representing an upstream user; public ingress) | orchestrator (N replicas) | `Shared` | 1 | `WorkflowEvent { MockRequest }` |
-| `test.batch.<cohort>` | orchestrator | worker | `Shared` (multiple workers fan out by message) | 1 | `OrchestratorToWorker { MockBatch }` |
+| `test.batch.<cohort>` | orchestrator | worker | `Shared` (single worker in the harness; consumers may scale by deployment policy) | 1 | `OrchestratorToWorker { MockBatch }` |
 | `test.result` | worker | orchestrator (N replicas) | `Shared` | 1 | `WorkerResult { MockResult }` |
 | `test.control.orchestrator` | test driver | orchestrator | `Failover` | 1 | `ControlEnvelope { Drain | Reload }` |
 | `test.control.worker` | orchestrator | worker | `Failover` | 1 | `ControlEnvelope { Drain | Reload }` |
@@ -60,9 +61,10 @@ co-resident Apple worker and Linux worker do not steal each other's batches.
 ## Subscription mode rules
 
 - **Shared** is the default mode for orchestrator and worker fan-out / fan-in / fan-back.
-  Multiple replica instances may attach to the same subscription name; the broker distributes
-  messages round-robin and guarantees at-most-one-active-consumer-per-message. This is how
-  the harness exercises horizontal scale at N>1 without locks or coordination.
+  Multiple coordinator/orchestrator replicas attach to the same subscription name; the broker
+  distributes messages round-robin and guarantees at-most-one-active-consumer-per-message. The
+  harness deliberately keeps worker cardinality at one per matrix case, so worker `Shared`
+  mode validates cursor semantics without validating multiple worker replicas.
 - **Exclusive** is not used anywhere in the current harness. The harness is deliberately
   designed to validate the lock-free shared-subscription model. (Reserved for future use if a
   control topic ever needs strict single-consumer ownership of a cursor.)
@@ -83,11 +85,11 @@ because the harness is designed to validate the lock-free shared-subscription mo
 flat:
 
 - `daemon-substrate-test-orchestrator` (shared across all orchestrator replicas)
-- `daemon-substrate-test-worker-<cohort>` (shared across all worker replicas in the cohort)
+- `daemon-substrate-test-worker-<cohort>` (the single worker for that matrix case)
 
 Two orchestrator replicas attach under the same `daemon-substrate-test-orchestrator`
-subscription; Pulsar treats them as one consumer set and distributes accordingly. Same for
-worker replicas within a cohort.
+subscription; Pulsar treats them as one consumer set and distributes accordingly. The harness
+does not run multiple worker replicas within a matrix case.
 
 ## Payload encoding
 

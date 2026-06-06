@@ -15,7 +15,7 @@
 
 The current Phase 7 surface is the substrate-keyed `hostbootstrap` schema:
 `hostbootstrap.dhall` maps `AppleSilicon` to `HostDaemon`, `LinuxCpu` to `Container`, and
-`LinuxGpu` to `HostBinary`. The project name is `daemon-substrate-test`, matching the command
+`LinuxGpu` to the CUDA-flavored `Container`. The project name is `daemon-substrate-test`, matching the command
 hostbootstrap builds and invokes. `docker/Dockerfile` is a thin
 `FROM ${BASE_IMAGE}` project layer with the container-only Cabal project file, a
 `daemon-substrate-test check-code` build gate, and a tini-wrapped project entrypoint with no
@@ -63,9 +63,10 @@ injected by `hostbootstrap` as `H`; the file has no import line.
   `service --role worker --config dhall/worker.dhall`.
 - `LinuxCpu` uses `H.cluster (H.Model.Container ...)` with the thin Dockerfile and mounts for
   `./.data` and `/var/run/docker.sock`.
-- `LinuxGpu` uses `H.cluster (H.Model.HostBinary ...)`.
-- Host-native models include the optional project container artifact where the harness needs the
-  project image for kind workloads.
+- `LinuxGpu` uses `H.cluster (H.Model.Container ...)` through the same `linuxContainer`
+  binding as Linux CPU; the selected substrate still chooses the CUDA-flavored base image.
+- The `HostDaemon` model includes the optional project container artifact where the harness
+  needs the project image for kind workloads.
 
 #### Validation
 
@@ -130,7 +131,7 @@ that lifecycle commands preserve `./.data/`.
 #### Validation
 
 Validated with detected-host and forced-target bring-up flows. The live validation evidence is
-tracked in Phase 8, which owns the executable and integration readiness gate. Phase 7 validates
+tracked in Phase 8, which owns the executable integration matrix. Phase 7 validates
 the hostbootstrap boundary and project-file shape that those live flows consume.
 
 ### Sprint 7.4: Substrate-keyed targets + tini ENTRYPOINT + check-code build gate [Done]
@@ -147,7 +148,7 @@ the hostbootstrap boundary and project-file shape that those live flows consume.
 
 #### Objective
 
-Keep one model per substrate in a single config, remove the per-model Dhall files, remove
+Keep one substrate entry per target in a single config, remove the per-model Dhall files, remove
 resident-container defaults, and align the project command with hostbootstrap's templated build
 and handoff rules.
 
@@ -166,7 +167,8 @@ and handoff rules.
 #### Validation
 
 Static checks confirm the single Dhall file uses `H.config`, `substrates`, `H.entry`, and the
-three expected substrate/model pairs. Dockerfile checks confirm the tini-wrapped entrypoint,
+expected target map (`AppleSilicon -> HostDaemon`, `LinuxCpu -> Container`,
+`LinuxGpu -> Container`). Dockerfile checks confirm the tini-wrapped entrypoint,
 `check-code` gate, and absence of a default `CMD`. The harness parser accepts
 `cluster up/down/delete/status`, preserves the direct `--model` override, and resolves the
 hostbootstrap-selected model for plain handoff commands.
@@ -199,4 +201,4 @@ hostbootstrap-selected model for plain handoff commands.
 
 **Cross-references to add:**
 - `../../README.md` and `system-components.md` describe the substrate-keyed target map and the
-  3×3 target/model × workflow matrix.
+  active executable execution-model × workflow matrix.

@@ -4,14 +4,15 @@
 **Supersedes**: N/A
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md), [phase-2-capability-typeclasses-and-admin-surfaces.md](phase-2-capability-typeclasses-and-admin-surfaces.md)
 
-> **Purpose**: Establish the cabal package, GHC pin, module skeleton, and CI build so later
-> phases have a place to land their code.
+> **Purpose**: Establish the cabal package, GHC pin, module skeleton, and local validation
+> policy so later phases have a place to land their code.
 
 ## Phase Status
 
 **Status**: Done
 
-The original scaffolding (Sprints 1.1–1.3) is implemented, and Sprint 1.4 is now closed:
+The original scaffolding (Sprints 1.1–1.2) is implemented, Sprint 1.3 is closed as a local
+validation policy with no GitHub Actions surface, and Sprint 1.4 is closed:
 `cabal.project` pins the exact `ghc-9.12.4` toolchain, enables the warm-store-compatible
 `tests` / `benchmarks` / `shared` / `optimization: 2` profile, and
 `cabal.project.container` imports `/opt/basecontainer/haskell-deps/cabal.project.freeze` for
@@ -23,8 +24,9 @@ container builds only. Native `HostBinary` / `HostDaemon` builds use the root
 ## Phase Objective
 
 Stand up the structural shell of the library: `daemon-substrate.cabal`, `cabal.project` with
-GHC 9.12 pinned, an empty `src/Daemon/` skeleton, and a no-op `cabal build all` that
-verifies the toolchain is healthy.
+GHC 9.12 pinned, an empty `src/Daemon/` skeleton, and local Cabal validation that verifies
+the toolchain is healthy. This repository does not use `.github/` workflows or GitHub
+Actions for validation.
 
 No public typeclass surface lands in this phase. Phase 1 produces a buildable but empty
 library; Phase 2 fills the typeclass surface in.
@@ -89,25 +91,35 @@ compiles them and so Phase 2 has a place to add typeclass definitions.
 
 (none)
 
-### Sprint 1.3: CI build [Done]
+### Sprint 1.3: Local validation policy; no GitHub Actions [Done]
 
 **Status**: Done
-**Implementation**: `.github/workflows/ci.yml`
+**Implementation**: `documents/development/local_dev.md`, `.gitignore`,
+`daemon-substrate.cabal`
 **Docs to update**: `documents/development/local_dev.md`
 
 #### Objective
 
-Wire a GitHub Action that runs `cabal build all` and `cabal test daemon-substrate-unit` on
-push to `main` and on pull requests.
+Define the repository's validation surface for the scaffolding phase without introducing
+GitHub Actions. The repository intentionally does not track `.github/` workflows; validation
+is local Cabal execution plus the project-container `daemon-substrate-test check-code` gate
+owned by later phases.
 
 #### Deliverables
 
-- `.github/workflows/ci.yml` building on `ubuntu-latest` with GHC 9.12
-- Optionally, a separate matrix entry building on `macos-latest` (Apple cohort)
+- `.github/` remains ignored because GitHub Actions is not a supported validation surface.
+- `documents/development/local_dev.md` documents the local Cabal and hostbootstrap validation
+  commands.
+- `daemon-substrate.cabal` carries the library, executable, and test-suite stanzas that local
+  validation exercises.
 
 #### Validation
 
-CI workflow runs green on the first push that includes it.
+Local validation gates:
+
+- `cabal build all --enable-tests`
+- `cabal test daemon-substrate-unit`
+- `cabal test daemon-substrate-haskell-style`
 
 #### Remaining Work
 

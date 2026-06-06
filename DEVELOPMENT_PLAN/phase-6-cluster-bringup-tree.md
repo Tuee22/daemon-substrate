@@ -11,8 +11,18 @@
 
 ## Phase Status
 
-**Status**: Done
-**Implementation**: Sprints 6.1, 6.2, and 6.3 are implemented and validated.
+**Status**: Active
+**Implementation**: Sprints 6.1, 6.2, and 6.3 are implemented and validated, but the
+worker-cardinality and Harbor-publication contract was corrected after closure.
+
+### Remaining Work
+
+- Replace the old two-worker in-cluster harness topology with exactly one worker per matrix
+  case. The worker owns the resources of the whole node whether it runs in-cluster or as a
+  host daemon.
+- Replace the direct kind image-load publication path with per-cluster Harbor deployment plus
+  harness image upload. The host/project artifact may be reused, but each fresh cluster must
+  receive its own Harbor deployment and image upload.
 
 ## Phase Objective
 
@@ -108,6 +118,8 @@ Validated with:
 The chart uses local Harbor / Pulsar / MinIO dependency charts so render validation is
 deterministic and does not require network chart repositories.
 
+Sprint 6.4 supersedes the two-worker default above with the corrected one-worker topology.
+
 ### Sprint 6.3: Dhall configs for orchestrator and worker [Done]
 
 **Status**: Done
@@ -144,6 +156,49 @@ Validated with:
 
 Live service boot against a running cluster is validated in Phase 8, when the
 `daemon-substrate-test` executable and integration harness land.
+
+### Sprint 6.4: Single-worker topology and Harbor upload path [Active]
+
+**Status**: Active
+**Implementation**: `src/Daemon/Cluster/Workload.hs`, `src/Daemon/Cluster/Harbor.hs`,
+`src/Daemon/Cluster/Runner.hs`, `chart/values.yaml`, `chart/values/linux-cpu.yaml`,
+`chart/templates/deployment-worker.yaml`, `test/unit/Main.hs`
+**Docs to update**: `../documents/engineering/cluster_topology.md`,
+`../documents/development/testing_strategy.md`, `system-components.md`,
+`legacy-tracking-for-deletion.md`
+
+#### Objective
+
+Correct the cluster topology for the executable 3x3 integration suite. Each matrix case has
+one coordinator/orchestrator Deployment with two replicas and exactly one worker. In-cluster
+worker models deploy one worker pod; `HostDaemon` starts one foreground host worker process.
+Every fresh cluster deploys Harbor and receives the harness image through Harbor before the
+coordinator and worker workloads roll out.
+
+#### Deliverables
+
+- chart defaults and per-cohort overrides set worker `replicas: 1`
+- Haskell workload-plan defaults and unit tests expect exactly one in-cluster worker
+- worker anti-affinity remains allowed but is no longer used to validate multi-worker split
+- Harbor publication action uploads/tags the already-built harness image through the fresh
+  cluster's Harbor deployment instead of relying on direct kind image-load as the target
+  publication behavior
+- documentation and legacy ledger entries record that the old two-worker and direct-kind-load
+  surfaces are obsolete
+
+#### Validation
+
+- `cabal build all --enable-tests`
+- `cabal test daemon-substrate-unit daemon-substrate-haskell-style`
+- `helm template daemon-substrate-test ./chart -f chart/values/linux-cpu.yaml`
+- `helm template daemon-substrate-test ./chart -f chart/values/apple-silicon.yaml`
+- unit assertions prove one worker Deployment for in-cluster models and no worker Deployment
+  for host-daemon models
+
+#### Remaining Work
+
+Sprint 6.4 is not implemented in the current repo state. The existing chart and Haskell
+defaults still contain the old two-worker topology and direct kind image-load publication path.
 
 ## Documentation Requirements
 

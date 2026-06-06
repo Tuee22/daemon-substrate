@@ -15,8 +15,8 @@
   the canonical build, lifecycle, and bootstrap layer for this repository.
 - `daemon-substrate` ships one `hostbootstrap.dhall` with one entry per hardware substrate:
   `AppleSilicon`, `LinuxCpu`, and `LinuxGpu`.
-- Each substrate has exactly one execution model: Apple Silicon uses `HostDaemon`, Linux CPU
-  uses `Container`, and Linux GPU uses `HostBinary`.
+- Each substrate has exactly one execution model: Apple Silicon uses `HostDaemon`; Linux CPU
+  and Linux GPU both use `Container`, with Linux GPU selecting the CUDA-flavored base image.
 - `hostbootstrap cluster up/down/delete` forwards the same project command every time:
   `daemon-substrate-test cluster up/down/delete`. There are no explicit handoff commands in
   the Dhall file.
@@ -27,7 +27,7 @@
   Docker containers, and does not provide a development mode. After reboot, the operator runs
   `hostbootstrap cluster up` again.
 - `--force-target <apple-silicon|linux-cpu|linux-gpu>` lets one physical host exercise any
-  declared target for the harness matrix.
+  declared hostbootstrap target. It does not stand in for the inner 3x3 integration matrix.
 
 ## Current Status
 
@@ -41,7 +41,7 @@ matrix is:
 |-----------------|-------|-------------------|
 | `AppleSilicon` | `HostDaemon` | `.build/daemon-substrate-test cluster up`; daemon foreground process via `hostbootstrap daemon run` |
 | `LinuxCpu` | `Container` | `docker run --rm <image> cluster up` |
-| `LinuxGpu` | `HostBinary` | `.build/daemon-substrate-test cluster up` |
+| `LinuxGpu` | `Container` | `docker run --rm <image> cluster up` with the CUDA-flavored base image |
 
 `cluster down` and `cluster delete` use the same target selection. For `HostDaemon`,
 `hostbootstrap` does not stop a daemon process; the operator, service manager, or test harness
@@ -110,10 +110,6 @@ let linuxContainer =
           ]
         }
 
-let hostBinary =
-      H.Model.HostBinary
-        H.HostBinary::{ container = Some projectContainer }
-
 let hostDaemon =
       H.Model.HostDaemon
         H.HostDaemon::{
@@ -126,7 +122,7 @@ in  H.config
       , substrates =
         [ H.entry H.Substrate.AppleSilicon (H.cluster hostDaemon)
         , H.entry H.Substrate.LinuxCpu (H.cluster linuxContainer)
-        , H.entry H.Substrate.LinuxGpu (H.cluster hostBinary)
+        , H.entry H.Substrate.LinuxGpu (H.cluster linuxContainer)
         ]
       }
 ```
@@ -143,10 +139,10 @@ Normal operation uses the detected host substrate:
 |---------------|----------------|---------------|
 | macOS arm64 Apple Silicon | `AppleSilicon` | `HostDaemon` |
 | Linux without NVIDIA runtime | `LinuxCpu` | `Container` |
-| Linux with NVIDIA runtime | `LinuxGpu` | `HostBinary` |
+| Linux with NVIDIA runtime | `LinuxGpu` | `Container` |
 
 For validation, every lifecycle command that builds or invokes a target accepts
-`--force-target`. This lets one physical host run the full three-target harness:
+`--force-target`. This lets one physical host run the three declared hostbootstrap targets:
 
 ```bash
 hostbootstrap cluster up --force-target apple-silicon
@@ -158,13 +154,14 @@ hostbootstrap cluster down --force-target linux-gpu
 ```
 
 The mock engine remains CPU-only; `LinuxGpu` exists to validate the Linux GPU hostbootstrap
-target and HostBinary lifecycle shape, not to exercise CUDA computation in this repository.
+target, NVIDIA runtime prerequisite, CUDA-flavored base-image path, and container lifecycle,
+not to exercise CUDA computation in this repository.
 
 ## Base Image And Toolchain
 
 `hostbootstrap` selects the base tag from the target substrate. `AppleSilicon` and `LinuxCpu`
 use CPU-flavored base images for container artifacts; `LinuxGpu` uses the CUDA-flavored base
-for the Linux host-binary build container and optional project image. The base ships
+for the one-shot project container. The base ships
 `ghc-9.12.4`, Cabal, kube tools (`kubectl`, `helm`, `kind`), `protoc`, `ormolu`, `hlint`, and
 a warm Haskell store.
 
@@ -246,4 +243,5 @@ for obsolete surfaces that were removed during earlier phases.
 - First-run developer flow: [../development/local_dev.md](../development/local_dev.md)
 - Cluster topology: [cluster_topology.md](cluster_topology.md)
 - Cabal layout: [cabal_layout.md](cabal_layout.md)
-- Phase that delivers the integration: [../../DEVELOPMENT_PLAN/phase-7-hostbootstrap-and-project-dockerfile.md](../../DEVELOPMENT_PLAN/phase-7-hostbootstrap-and-project-dockerfile.md)
+- Bootstrap config phase: [../../DEVELOPMENT_PLAN/phase-7-hostbootstrap-and-project-dockerfile.md](../../DEVELOPMENT_PLAN/phase-7-hostbootstrap-and-project-dockerfile.md)
+- Integration matrix phase: [../../DEVELOPMENT_PLAN/phase-8-test-harness-integration.md](../../DEVELOPMENT_PLAN/phase-8-test-harness-integration.md)

@@ -42,7 +42,8 @@ Establish `daemon-substrate.cabal`, `cabal.project` (GHC 9.12 pinned, matching t
 `hostbootstrap` base image), the empty `src/Daemon/` module skeleton (including
 `Daemon.Sub` — the typed `Subprocess` boundary that later phases shell out through for MinIO,
 Harbor, Kubectl, and `SubprocessEngine`; Pulsar is the in-process exception),
-and a no-op CI build that proves `cabal build all` succeeds. No public typeclass surface yet;
+and a local validation policy that proves `cabal build all` succeeds without introducing
+GitHub Actions. No public typeclass surface yet;
 just the structural shell.
 
 Depends on Phase 0 closing the documentation standards so the cabal layout doc can land
@@ -110,17 +111,19 @@ the audit topic, and depend on the `Daemon.Wire.*` wrapper layer from Sprint 4.5
 ### Phase 6 — cluster bring-up tree (kind cluster and Helm chart)
 
 Land the cluster bring-up tree `src/Daemon/Cluster/{Kind,Storage,Helm,Harbor,Pulsar,MinIO,Workload,EdgePort}.hs`,
-the `chart/` directory with Harbor / Pulsar / MinIO chart dependencies and the orchestrator /
-worker Deployment templates, and the `dhall/` configs for both roles. ConfigMap rendering
-wired up so cluster bring-up materializes the staged Dhall files into the cluster.
+the `chart/` directory with Harbor / Pulsar / MinIO chart dependencies and the coordinator /
+orchestrator / worker Deployment templates, and the `dhall/` configs for both roles.
+ConfigMap rendering wires the staged Dhall files into the cluster. This phase is reopened to
+correct the harness topology to one worker per matrix case and to make per-cluster Harbor
+image upload the supported publication path.
 
 Depends on Phase 5 because the chart needs working daemon binaries to deploy.
 
 ### Phase 7 — hostbootstrap.dhall and thin project Dockerfile
 
 Land `hostbootstrap.dhall` at the repository root as the single substrate-keyed config:
-`AppleSilicon` uses `HostDaemon`, `LinuxCpu` uses `Container`, and `LinuxGpu` uses
-`HostBinary`. Land the thin `docker/Dockerfile` (`FROM ${BASE_IMAGE}` plus
+`AppleSilicon` uses `HostDaemon`, while `LinuxCpu` and `LinuxGpu` use `Container`
+(`LinuxGpu` selecting the CUDA-flavored base image). Land the thin `docker/Dockerfile` (`FROM ${BASE_IMAGE}` plus
 the project's own build steps, the `check-code` gate, and a tini-wrapped entrypoint with no
 default `CMD`). After this phase, an operator can run `hostbootstrap cluster up` for the
 detected host or use `--force-target` for validation. Substrate detection, host-prereq checks,
@@ -135,12 +138,11 @@ orchestrator / worker) must exist before the outer entry can deliver a `Ready` c
 
 Land the `daemon-substrate-test` executable, the four cabal test stanzas
 (`daemon-substrate-unit`, `daemon-substrate-lifecycle`, `daemon-substrate-integration`,
-`daemon-substrate-haskell-style`), the live cluster interpreters, and the readiness gate
-described in
-[`../documents/development/testing_strategy.md`](../documents/development/testing_strategy.md):
-cluster lifecycle, dependency rollouts, retained PVCs, daemon workload readiness, edge-port
-state, and the workflow coverage audit map tying unit coverage plus live-smoke evidence to
-the consumer-representative workflows.
+`daemon-substrate-haskell-style`), the live cluster interpreters, and the executable 3x3
+integration gate described in
+[`../documents/development/testing_strategy.md`](../documents/development/testing_strategy.md).
+Closure requires one `daemon-substrate-test test integration` invocation to create, assert, and
+tear down nine fresh clusters: each execution model crossed with each workflow archetype.
 
 Depends on Phase 7 because integration tests need the bootstrap-driven cluster bring-up.
 
@@ -162,7 +164,8 @@ be recorded when a phase depends on it. See
 - A "consumer migration" phase. Wiring `infernix` and `jitML` to consume the library is the
   consumers' work, not the substrate's.
 - Consumer GPU correctness. The mock engine performs no accelerator work; the Linux GPU target
-  validates hostbootstrap lifecycle shape, not model correctness.
+  validates hostbootstrap's Linux GPU substrate, CUDA-flavored base-image path, and container
+  lifecycle shape, not model correctness.
 - A "bootstrap scripting" phase. Substrate-specific bootstrap shell scripts, custom Compose
   files, and multi-language Dockerfile layers are owned by
   [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap), not by this repository.

@@ -233,9 +233,10 @@ Property tests in `daemon-substrate-unit`:
   `Redirect` with the secondary topic.
 - Expired requests are dropped before dispatch and emit `BatcherDroppedExpired` telemetry.
 
-Integration tests in `daemon-substrate-integration`:
+Target matrix assertions in `daemon-substrate-integration`:
 
-- End-to-end batching against filesystem Pulsar with synthetic load profiles (uniform, bursty, heavy-tailed).
+- End-to-end batching against the live Pulsar/MinIO harness with synthetic load profiles
+  (uniform, bursty, heavy-tailed).
 - Hot-bucket-vs-cold-bucket starvation regression: under sustained load, cold bucket completes ≥ `cold_weight / total_weight` fraction of service slots.
 - Deadline-miss regression: a workload with declared deadlines sees `deadline_miss_rate` stay under threshold across the synthetic load.
 

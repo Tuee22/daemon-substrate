@@ -329,9 +329,10 @@ Static quality and compiler hygiene are first-class repository requirements.
 - The library builds with strict compiler warnings as errors on supported paths.
 - The plan distinguishes mechanically enforced hard-gate inputs from editor-only guidance and
   keeps review guidance separate from hard validation rules.
-- The documentation validator is implemented in `daemon-substrate-haskell-style`; formatter,
-  hlint, and CI wiring are explicit future hardening items if the repository chooses to require
-  those tools mechanically outside the `hostbootstrap` base.
+- The documentation validator is implemented in `daemon-substrate-haskell-style`; formatter and
+  hlint are explicit future hardening items if the repository chooses to require those tools
+  mechanically outside the `hostbootstrap` base.
+- `.github/` workflows and GitHub Actions are not part of the current validation surface.
 
 ### O. Imported Practices and Explicit Non-Adoption
 
@@ -356,15 +357,36 @@ The repository ships its own end-to-end test harness — a self-managed kind clu
 orchestrator and worker daemons, a mock engine — purely to prove the library substrate works.
 Consumers are not expected to run it; it exists for `daemon-substrate`'s own validation.
 
-- `daemon-substrate-test integration` exercises: cluster lifecycle (`up` / `status` / `down`),
-  orchestrator-to-worker handoff via Pulsar, worker reads of mock weight blobs from MinIO, mock
-  engine result publication back through Pulsar, ephemeral local cache lifecycle.
+- `daemon-substrate-test test integration` is the executable 3x3 gate. A single invocation runs each
+  execution model (`Container`, `HostBinary`, `HostDaemon`) against each workflow archetype
+  (continuous batched inference, finite training / offline RL, continuous online RL), for nine
+  independent cases.
+- Every matrix case owns its cluster lifecycle end to end: create a fresh kind cluster, deploy
+  Harbor / Pulsar / MinIO, upload the already-built harness image through Harbor, deploy the
+  coordinator and worker services, run the case assertions, and tear the cluster down. The
+  integration suite may reuse a previously built host/project artifact, but it must not reuse a
+  live cluster, live Harbor deployment, or uploaded in-cluster image between matrix cases.
+- The coordinator service always runs in-cluster as a two-replica Deployment. The worker is
+  cardinality-one for each case because it owns the resources of the whole node. That is true
+  whether the worker runs as an in-cluster Deployment or as a host daemon.
+- There is one compiled Haskell binary for both long-running roles. The role-specific behavior
+  is selected by Dhall: the same binary launches as coordinator or worker with different
+  `BootConfig`, `LiveConfig`, and `LifecyclePolicy` inputs, including the Pulsar topics it
+  reads from and writes to.
+- The coordinator may idempotently create missing Pulsar topics declared by its Dhall-driven
+  lifecycle policy. The worker / inference daemon must not create workflow topics; it consumes
+  only the topics assigned in its Dhall config.
+- `daemon-substrate-test test integration` exercises: cluster lifecycle (`up` / `status` / `down`),
+  coordinator-to-worker handoff via Pulsar, worker reads of mock weight blobs from MinIO, mock
+  engine result publication back through Pulsar, ephemeral local cache lifecycle, and the
+  workflow-specific assertions for each matrix case.
 - The mock engine returns placeholder result bytes and performs mock MinIO reads and mock cache
   read/writes. It is representative of the workflow shape but is storage- and compute-light by
   design. The plan must not describe the mock engine as if it were a real ML backend.
-- Coverage does **not** include a model matrix, an inference correctness oracle, or any
-  hardware-accelerator validation. Those are consumer responsibilities (`infernix` and `jitML`
-  validate against their own model matrices).
+- Coverage includes the test-harness execution-model matrix, but not an inference correctness
+  oracle or hardware-accelerator validation. Those remain consumer responsibilities
+  (`infernix` and `jitML` validate their real model behavior against their own hardware
+  matrices).
 - `daemon-substrate-test e2e` is reserved for browser- or HTTP-API-driven coverage if and when
   the test harness exposes such a surface; it remains out of scope until an explicit phase opens
   it.
@@ -383,18 +405,20 @@ Definitions:
   `hostbootstrap daemon run`, or direct `./.build/daemon-substrate-test ...` commands.
 - **Linux CPU target:** Linux `Container` workflow through `hostbootstrap cluster up`
   (thin project container `FROM` the hostbootstrap base tag, one-shot `cluster up` handoff).
-- **Linux GPU target:** Linux `HostBinary` workflow through `hostbootstrap cluster up`
-  (native binary built via the selected hostbootstrap base and plain `cluster up` handoff).
+- **Linux GPU target:** Linux `Container` workflow through `hostbootstrap cluster up`
+  (thin project container built from the CUDA-flavored hostbootstrap base, one-shot
+  `cluster up` handoff).
 
 The mock engine performs no accelerator work. The Linux GPU target validates hostbootstrap's
-Linux GPU substrate, CUDA-flavored base-image path, and HostBinary lifecycle shape; consumers
+Linux GPU substrate, NVIDIA runtime prerequisite, CUDA-flavored base-image path, and container lifecycle shape; consumers
 (`infernix`, `jitML`) carry real GPU correctness obligations against their own model matrices.
 
 Rules:
 
 - Sprint development and first validation should be possible on the machine that owns the changed
-  path. Use `--force-target` to exercise all three declared targets on one machine when that is
-  the practical validation path.
+  path. The integration suite itself must run the full 3x3 model/workflow matrix on any
+  supported physical machine. Use `--force-target` to exercise the three declared hostbootstrap
+  targets when validating substrate detection, base-image selection, or hostbootstrap handoff.
 - Sprint `Validation` sections distinguish local forced-target gates from physical hardware
   closure when hardware-specific evidence is required.
 - A phase may stay `Active` with an explicit target-pending residual after one target validates,

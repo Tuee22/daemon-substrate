@@ -14,7 +14,7 @@
   substrate entry in `hostbootstrap.dhall`, builds the project artifact, and forwards
   `daemon-substrate-test cluster up`.
 - The declared target map is Apple Silicon `HostDaemon`, Linux CPU `Container`, Linux GPU
-  `HostBinary`.
+  `Container` with the CUDA-flavored base image.
 - `hostbootstrap cluster down` forwards `cluster down`; `hostbootstrap cluster delete`
   forwards `cluster delete`.
 - For `HostDaemon`, run `hostbootstrap daemon run` as a separate foreground process after
@@ -22,7 +22,8 @@
 - `hostbootstrap` does not install launchd/systemd units and does not create Docker containers
   that restart after reboot. Run `hostbootstrap cluster up` after each reboot.
 - `--force-target <apple-silicon|linux-cpu|linux-gpu>` lets one physical host exercise any
-  declared target for validation.
+  declared hostbootstrap target for validation. It is separate from the inner 3x3 integration
+  matrix.
 - `./.data/` is preserved by outer lifecycle commands.
 
 ## Ownership Boundary
@@ -43,8 +44,8 @@ for the full boundary statement.
 | Target | Normal host | Model | Worker placement |
 |--------|-------------|-------|------------------|
 | `apple-silicon` | macOS arm64 | `HostDaemon` | host-native worker process |
-| `linux-cpu` | Ubuntu/Linux without NVIDIA runtime | `Container` | in-cluster worker Deployment |
-| `linux-gpu` | Ubuntu/Linux with NVIDIA runtime | `HostBinary` | in-cluster worker Deployment |
+| `linux-cpu` | Ubuntu/Linux without NVIDIA runtime | `Container` | single in-cluster worker Deployment |
+| `linux-gpu` | Ubuntu/Linux with NVIDIA runtime | `Container` | single in-cluster worker Deployment |
 
 Use `--force-target` on `build`, `run`, and `cluster ...` commands when validating another
 target on the current host.
@@ -79,16 +80,16 @@ The inner `cluster up` reconciles, in order:
    action; verify the model-specific node topology.
 2. **Manual storage**: install the `daemon-substrate-manual` StorageClass and provision durable
    PVs backed by `./.data/kind/...`.
-3. **Image build**: build `daemon-substrate-test:local` from the thin project Dockerfile and
-   load it directly into kind.
+3. **Image publication**: reuse or build the harness artifact as needed, deploy Harbor, and
+   upload the harness image into the fresh cluster's Harbor registry.
 4. **Helm dependencies**: build or refresh Harbor, Pulsar, and MinIO chart dependencies.
 5. **Dependency readiness**: wait for Harbor, Pulsar, and MinIO StatefulSets to become ready.
 6. **Pulsar bootstrap**: create the harness tenant, namespace, and topics idempotently.
 7. **MinIO bootstrap**: create the harness buckets and seed mock blobs.
 8. **ConfigMaps**: render orchestrator and worker Dhall ConfigMaps.
 9. **Orchestrator Deployment**: roll out and wait for readiness.
-10. **Worker**: roll out the in-cluster worker Deployment for `Container` / `HostBinary`, or use
-    the caller-owned foreground `hostbootstrap daemon run` process for `HostDaemon`.
+10. **Worker**: roll out one in-cluster worker for `Container` / `HostBinary`, or use one
+    caller-owned foreground `hostbootstrap daemon run` process for `HostDaemon`.
 11. **Edge port discovery / forwarding**: pick and persist Pulsar, Pulsar admin, and MinIO edge
     ports; host-native paths use those records to reach in-cluster services.
 
@@ -100,11 +101,12 @@ The cluster is `Ready` when these conditions hold:
 2. Pulsar admin is reachable on the chosen edge port.
 3. Every MinIO bucket named in `LifecyclePolicy` exists.
 4. The orchestrator Deployment is `2/2` Ready.
-5. The worker is Ready: in-cluster replicas for `Container` / `HostBinary`, host-native process
-   for `HostDaemon`.
+5. The worker is Ready: one in-cluster worker for `Container` / `HostBinary`, one host-native
+   process for `HostDaemon`.
 6. `runReconciler` has completed at least one full tick.
 
-`daemon-substrate-test test integration` uses this same readiness contract. See
+`daemon-substrate-test test integration` uses this readiness contract inside each of its nine
+model/workflow cases, creating and tearing down a fresh cluster per case. See
 [../reference/cli_surface.md](../reference/cli_surface.md) and
 [../development/testing_strategy.md](../development/testing_strategy.md).
 

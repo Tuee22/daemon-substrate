@@ -5,16 +5,16 @@
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [phase-7-hostbootstrap-and-project-dockerfile.md](phase-7-hostbootstrap-and-project-dockerfile.md)
 
 > **Purpose**: Land the `daemon-substrate-test` executable, the four cabal test stanzas, the
-> live cluster interpreters, and the integration readiness gate that proves the harness reaches
-> the supported kind topology on both cohorts with the mock engine deployed.
+> live cluster interpreters, and the executable 3x3 integration gate that proves the supported
+> execution-model/workflow matrix with the mock engine deployed.
 
 ## Phase Status
 
-**Status**: Done
+**Status**: Active
 
 Sprints 8.1 through 8.6 closed the executable, live cluster, and service-loop surfaces:
 `daemon-substrate-test test ...` delegates to Cabal, `cluster ...` executes concrete kind /
-kubectl / helm / Docker image build and kind image-load actions, the local Harbor / Pulsar /
+kubectl / helm / Docker image build and the current image-publication actions, the local Harbor / Pulsar /
 MinIO dependency charts are deployable, Pulsar and MinIO admin actions run through the live
 pods, the chart mounts PVC-backed state into the dependency pods, and the harness `service`
 command runs the live worker / orchestrator loops.
@@ -22,30 +22,37 @@ Apple Silicon preserved-state kind bring-up, in-place `cluster up` idempotency, 
 edge-port forwarding, host-worker handoff, and a live request -> orchestrator -> host worker
 -> response workflow handoff are validated. Linux hostbootstrap container bring-up,
 two-cycle preserved-state kind bring-up, Ready workload state, and the
-`daemon-substrate-integration` live readiness gate are validated. That work remains valid and
-is not being rewritten.
+`daemon-substrate-integration` live readiness gate are useful validation evidence. They do not
+close the reopened one-worker topology or executable 3x3 integration requirements.
 
 Sprint 8.7 is closed against the substrate-keyed bootstrap shape: `daemon-substrate-test`
 exposes `check-code`, cluster commands accept a direct `--model` debugging override, plain
 hostbootstrap handoff resolves the selected target/model, `cluster delete` is implemented,
 `detectClusterCohort` OS branching is removed, the integration readiness gate keys node and
 worker expectations from the persisted execution-model marker, and `Daemon.Test.Matrix`
-records the 3×3 execution-model × workflow-archetype coverage map.
+records the 3×3 execution-model × workflow-archetype audit map.
 
-**Remaining work**: none.
+### Remaining Work
+
+- `daemon-substrate-integration` must become the executable 3x3 matrix runner. One invocation
+  must create and tear down a fresh kind cluster nine times: every execution model
+  (`Container`, `HostBinary`, `HostDaemon`) crossed with every workflow archetype.
+- Each matrix case must deploy Harbor / Pulsar / MinIO, upload the already-built harness image
+  through Harbor, deploy the two-replica coordinator/orchestrator and exactly one worker, run
+  workflow assertions, verify status, and tear the cluster down before the next case.
+- `test all` must run unit tests through the compiled binary and then run the full integration
+  matrix without requiring a preexisting cluster.
 
 ## Phase Objective
 
 Make the test harness real. The substrate's tests are the direct validation that the Haskell
 library surfaces, local lifecycle, cluster action plans, live cluster topology, and harness
-entrypoints work together. After Phase 8 closes, `daemon-substrate-test test all` on either
-cohort runs lint, unit, lifecycle, and integration gates; the integration stanza requires a
-running hostbootstrap-managed cluster and asserts node topology, dependency rollouts,
-daemon workload readiness, retained PVCs, and the edge-port record. The workflow coverage
-table in
+entrypoints work together. After Phase 8 closes, `daemon-substrate-test test all` on any
+supported physical machine runs lint, unit, lifecycle, and the full nine-case integration
+matrix. The integration stanza owns cluster lifecycle for every case; it does not depend on a
+preexisting hostbootstrap-managed cluster. The workflow coverage table in
 [`../documents/development/testing_strategy.md`](../documents/development/testing_strategy.md)
-remains the audit map that ties automated unit coverage, live readiness validation, and
-manual live-smoke evidence to consumer-representative behaviors.
+is the executable matrix contract, not just an audit map.
 
 ## Sprints
 
@@ -110,7 +117,8 @@ Validated with:
 
 - `cabal test daemon-substrate-unit`
 
-The local unit suite exits 0, and the full Phase 8 validation batch has run on both cohorts.
+The local unit suite exits 0. Historical Phase 8 validation ran on the then-current supported
+hostbootstrap targets; Sprint 8.8 owns the reopened executable 3x3 validation batch.
 
 ### Sprint 8.3: `daemon-substrate-lifecycle` stanza [Done]
 
@@ -258,7 +266,9 @@ cluster, and `service` runs the actual daemon role loop until terminated.
 #### Deliverables
 
 - `daemon-substrate-test test {unit,lifecycle,integration,lint,all}` delegates to Cabal and
-  propagates failures through the executable exit code.
+  propagates failures through the executable exit code. For container-model integration runs,
+  `test integration` and `test all` attach the current project container to Docker's `kind`
+  network before Cabal delegation so the internal kind kubeconfig resolves the API server.
 - `daemon-substrate-test cluster {up,down,delete,status}` runs the concrete action plan against
   absolute tool paths, builds `daemon-substrate-test:local`, loads it into kind, applies the
   manual StorageClass / PVs, installs the Helm chart, runs Pulsar admin through the broker
@@ -325,12 +335,12 @@ Validated locally with:
     worker pods Running with zero restarts
   - `kubectl get pvc,pv` showing Harbor, Pulsar, and MinIO PVCs bound to retained PVs
   - `./.data/runtime/edge-port.json` preserving `9090`, `9091`, and `9092`
-  - `daemon-substrate-test test all`
+  - `daemon-substrate-test test all` / `hostbootstrap run --force-target linux-cpu test all`
   - `cabal test daemon-substrate-integration --builddir=/tmp/daemon-substrate-cabal` from
     the project image on Docker's `kind` network, validating the live readiness gate against
     the current workspace.
 
-### Sprint 8.7: 3×3 model × workflow matrix + check-code subcommand [Done]
+### Sprint 8.7: 3×3 audit map + check-code subcommand [Done]
 
 **Status**: Done
 **Implementation**: `src/Daemon/Test/CLI/*`, `src/Daemon/Test/Matrix.hs`,
@@ -343,14 +353,15 @@ Validated locally with:
 
 #### Objective
 
-Extend the harness from the earlier two-cohort coverage to the full **3×3 matrix**:
+Extend the harness from the earlier two-cohort coverage to the direct inner **3×3 audit map**:
 each of the three execution models (`Container`, `HostBinary`, `HostDaemon`) exercising each of
 three ML workflow archetypes — (a) continuous batched inference (≈ `infernix`), (b) finite
 SL / offline-RL training jobs (≈ `jitML`), and (c) continuous online RL (MinIO weight updates
 announced on Pulsar inference topics; distinct training-vs-inference task messages routable to
 same-or-separate stateless engines). Land the `check-code` subcommand and refactor the test
-suite onto the single substrate-keyed hostbootstrap config. `daemon-substrate` is the reference
-scaffolding for `infernix` and `jitML`.
+suite onto the single substrate-keyed hostbootstrap config, whose Linux CPU and Linux GPU
+targets both use the `Container` model. `daemon-substrate` is the reference scaffolding for
+`infernix` and `jitML`.
 
 #### Deliverables
 
@@ -378,9 +389,68 @@ scaffolding for `infernix` and `jitML`.
 - built `daemon-substrate-test check-code`
 - static search confirms `detectClusterCohort` is absent from `src/`
 
+#### Follow-on Work
+
+The static audit map is implemented, but it does not satisfy the executable 3x3 integration
+contract. Sprint 8.8 owns the remaining live matrix runner.
+
+### Sprint 8.8: Executable 3x3 integration runner [Active]
+
+**Status**: Active
+**Implementation**: `src/Daemon/Test/Matrix.hs`, `src/Daemon/Test/CLI/Cluster.hs`,
+`src/Daemon/Test/CLI/Tests.hs`, `src/Daemon/Test/CLI/Service.hs`,
+`test/integration/Main.hs`, `src/Daemon/Cluster/*`, `chart/files/*.dhall`,
+`dhall/*.dhall`, `test/unit/Main.hs`
+**Docs to update**: `../documents/development/testing_strategy.md`,
+`../documents/reference/cli_surface.md`, `../documents/engineering/cluster_topology.md`,
+`../documents/engineering/hostbootstrap_integration.md`,
+`../documents/operations/cluster_bootstrap_runbook.md`, `../../README.md`,
+`system-components.md`, `legacy-tracking-for-deletion.md`
+
+#### Objective
+
+Make `daemon-substrate-test test integration` run the complete execution-model × workflow
+matrix on every supported physical host. A single integration invocation runs nine independent
+cases. Each case creates a fresh kind cluster, deploys Harbor / Pulsar / MinIO, uploads the
+already-built harness image through Harbor, deploys the two-replica coordinator/orchestrator
+service and exactly one worker, executes the workflow assertions for that cell, verifies
+cluster status, and tears the cluster down before the next case.
+
+#### Deliverables
+
+- integration runner that iterates `Daemon.Test.Matrix.harnessMatrixCases`
+- fresh cluster name/runtime paths per matrix case so cases cannot share live state
+- case lifecycle wrapper: `cluster up`, status/assertions, `cluster down/delete` cleanup
+- no redundant host/project Docker rebuild when an equivalent artifact is already available
+- per-case Harbor deployment and harness image upload
+- one compiled `daemon-substrate-test` binary used for both long-running roles; Dhall config
+  selects coordinator/orchestrator vs worker behavior and all Pulsar topic bindings
+- coordinator/orchestrator Deployment with `replicas: 2` in every case
+- exactly one worker in every case, either one in-cluster Deployment replica or one
+  caller-owned host-daemon process
+- coordinator/orchestrator idempotently creates missing Pulsar topics declared in
+  `LifecyclePolicy`; worker/inference daemon does not create workflow topics
+- workflow assertions for continuous batched inference, finite training / offline RL, and
+  continuous online RL
+- unit tests, invoked through `daemon-substrate-test test unit`, covering matrix enumeration,
+  per-case cluster naming/path isolation, one-worker topology, coordinator topic-creation
+  ownership, and teardown ordering
+
+#### Validation
+
+- `cabal build all --enable-tests`
+- `daemon-substrate-test test unit`
+- `daemon-substrate-test test integration` on at least one development host, showing nine
+  fresh cluster create/assert/teardown cycles
+- `hostbootstrap run --force-target apple-silicon test integration`
+- `hostbootstrap run --force-target linux-cpu test integration`
+- `hostbootstrap run --force-target linux-gpu test integration`
+- `daemon-substrate-test test all`
+
 #### Remaining Work
 
-(none)
+Sprint 8.8 is not implemented in the current repo state. The existing integration stanza still
+checks a single preexisting live environment rather than owning nine fresh cluster lifecycles.
 
 ## Documentation Requirements
 
@@ -393,9 +463,9 @@ scaffolding for `infernix` and `jitML`.
   `cluster delete`, direct inner `--model` debugging, and outer `--force-target` selection.
 
 **Development docs to create/update:**
-- `../documents/development/testing_strategy.md` distinguishes the current automated gates
-  from the workflow coverage audit map, records which live readiness checks are enforced
-  by `daemon-substrate-integration`, and frames the target 3×3 model × workflow matrix.
+- `../documents/development/testing_strategy.md` distinguishes the current implemented gates
+  from the target executable 3x3 matrix, records the nine-cluster lifecycle contract, and
+  states that the current readiness-only integration stanza is reopened work.
 
 **Architecture docs to create/update:**
 - `../documents/architecture/daemon_roles.md`,
@@ -406,5 +476,5 @@ scaffolding for `infernix` and `jitML`.
 **Cross-references to add:**
 - `system-components.md` keeps the `daemon-substrate-test`, `daemon-substrate-unit`,
   `daemon-substrate-lifecycle`, `daemon-substrate-integration`, and
-  `daemon-substrate-haskell-style` rows accurate, and records the `check-code` subcommand and
-  the 3×3 matrix as implemented work.
+  `daemon-substrate-haskell-style` rows accurate, records the `check-code` subcommand, and
+  tracks the executable 3x3 matrix as active work until Sprint 8.8 closes.

@@ -17,10 +17,10 @@
   `daemon-substrate-test` entrypoint.
 - The container is not a reboot-persistent service and does not remain resident for diagnostics.
   Run `hostbootstrap cluster up` after reboot.
-- The worker runs inside kind as a Deployment with pod anti-affinity.
-- Linux GPU hosts select the separate `LinuxGpu` entry, which uses `HostBinary`; use
-  `--force-target linux-cpu` when intentionally validating the Linux CPU container path on a GPU
-  host.
+- The worker runs inside kind as a single Deployment replica that owns the node resources for
+  that matrix case.
+- Linux GPU hosts select the separate `LinuxGpu` entry, which also uses the `Container` model
+  but builds from the CUDA-flavored hostbootstrap base image.
 
 ## Prerequisites
 
@@ -52,8 +52,9 @@ On Linux CPU, `cluster up`:
 1. Builds `daemon-substrate-test:linux-cpu-<arch>` from `docker/Dockerfile`.
 2. Runs the image as a one-shot container with `./.data` and `/var/run/docker.sock` mounted.
 3. Forwards `cluster up` to the project entrypoint.
-4. Lets the inner reconciler create kind, deploy Harbor / Pulsar / MinIO, roll out the
-   orchestrator, and roll out the in-cluster worker Deployment.
+4. Lets the inner reconciler create kind, deploy Harbor / Pulsar / MinIO, upload the harness
+   image through Harbor, roll out the coordinator/orchestrator, and roll out the single
+   in-cluster worker.
 
 The first build can take several minutes. Docker layer cache makes subsequent builds faster.
 
@@ -61,8 +62,7 @@ The first build can take several minutes. Docker layer cache makes subsequent bu
 
 Under the Linux CPU `Container` target the worker runs as a Kubernetes Deployment:
 
-- two replicas
-- required pod anti-affinity on `kubernetes.io/hostname`
+- one replica
 - `worker.dhall` mounted from `configmap-worker`
 - subscription to `test.batch.linux-cpu` in `Shared` mode
 
@@ -74,11 +74,16 @@ hostbootstrap run cluster status
 daemon-substrate-test test integration
 ```
 
+`daemon-substrate-test test integration` owns the full 3x3 model/workflow matrix and creates
+fresh clusters for its cases; it is not just a readiness check against this one Linux CPU
+cluster.
+
 ## Linux GPU Target
 
 A GPU-capable Linux host normally selects `LinuxGpu`, not `LinuxCpu`. In this repository the
-mock engine performs no CUDA work; the `LinuxGpu` target validates the HostBinary lifecycle and
-CUDA-flavored hostbootstrap base selection. To exercise it:
+mock engine performs no CUDA work; the `LinuxGpu` target validates the Linux GPU prerequisite
+path, CUDA-flavored hostbootstrap base selection, and the same one-shot container lifecycle as
+Linux CPU. To exercise it:
 
 ```bash
 hostbootstrap cluster up --force-target linux-gpu

@@ -17,7 +17,8 @@
 - Use `hostbootstrap run test ...` for the selected target, or
   `./.build/daemon-substrate-test test ...` after a host-native build.
 - Use `--force-target <apple-silicon|linux-cpu|linux-gpu>` to exercise another declared
-  substrate on the current machine.
+  hostbootstrap target on the current machine. The integration 3x3 matrix is separate and runs
+  inside `daemon-substrate-test test integration`.
 
 ## Current Status
 
@@ -28,11 +29,12 @@ test stanzas, and live kind harness. The current hostbootstrap target map is:
 |-----------------|-------|-------------|
 | `apple-silicon` | `HostDaemon` | macOS arm64 Apple Silicon |
 | `linux-cpu` | `Container` | Linux without NVIDIA runtime |
-| `linux-gpu` | `HostBinary` | Linux with NVIDIA runtime |
+| `linux-gpu` | `Container` | Linux with NVIDIA runtime; CUDA-flavored base image |
 
-The full validation matrix remains 3×3: three target/model pairs across three ML workflow
-archetypes. A complete hardware run uses three machines; `--force-target` can exercise all
-three target/model pairs on one machine for local validation.
+The hostbootstrap target validation surface has three substrate targets. A complete hardware
+run uses three machines; `--force-target` can exercise all three declared substrate targets on
+one machine for local validation. The integration suite's 3x3 execution-model/workflow matrix
+is expected to run on any supported physical machine.
 
 ## One-time Install
 
@@ -53,15 +55,11 @@ pipx install "git+https://github.com/tuee22/hostbootstrap.git#egg=hostbootstrap"
 
 ```bash
 hostbootstrap doctor
-hostbootstrap cluster up
-hostbootstrap daemon run  # HostDaemon target only; keep this foreground process running
 hostbootstrap run test unit
 hostbootstrap run test integration
-# Stop the foreground daemon process with Ctrl-C in its terminal before teardown.
-hostbootstrap cluster down
 ```
 
-On `HostBinary` and `HostDaemon` targets, the build artifact is also available directly:
+On `HostDaemon` targets, the build artifact is also available directly:
 
 ```bash
 ./.build/daemon-substrate-test test unit
@@ -74,25 +72,22 @@ On `HostBinary` and `HostDaemon` targets, the build artifact is also available d
 Use forced targets when validating the full hostbootstrap surface from one machine:
 
 ```bash
-hostbootstrap cluster up --force-target apple-silicon
-hostbootstrap daemon run --force-target apple-silicon
 hostbootstrap run --force-target apple-silicon test integration
-# Stop the foreground daemon process with Ctrl-C in its terminal before teardown.
-hostbootstrap cluster down --force-target apple-silicon
-
-hostbootstrap cluster up --force-target linux-cpu
 hostbootstrap run --force-target linux-cpu test integration
-hostbootstrap cluster down --force-target linux-cpu
-
-hostbootstrap cluster up --force-target linux-gpu
 hostbootstrap run --force-target linux-gpu test integration
-hostbootstrap cluster down --force-target linux-gpu
 ```
+
+The integration harness owns any foreground HostDaemon worker process it needs for individual
+matrix cases.
 
 The direct inner `--model` flag remains a debugging override for `daemon-substrate-test`
 itself. Normal operator workflows select the model through `hostbootstrap`.
 
 ## Build And Test Without A Cluster
+
+This repository does not use `.github/` workflows or GitHub Actions as a validation surface.
+Run validation locally through Cabal, or through the `daemon-substrate-test check-code` gate
+inside the project container.
 
 Pure local checks still work through Cabal:
 
@@ -101,8 +96,9 @@ cabal build all --enable-tests
 cabal test daemon-substrate-unit daemon-substrate-lifecycle daemon-substrate-haskell-style
 ```
 
-`daemon-substrate-integration` requires a live harness cluster brought up by `hostbootstrap
-cluster up`.
+`daemon-substrate-integration` owns live harness cluster lifecycle and is expected to create
+and tear down nine fresh kind clusters. Current reopened Phase 8 work tracks the gap where the
+implemented stanza still checks a preexisting live cluster.
 
 ## State Directories
 

@@ -11,10 +11,6 @@ let linuxContainer =
           ]
         }
 
-let hostBinary =
-      H.Model.HostBinary
-        H.HostBinary::{ container = Some projectContainer }
-
 let hostDaemon =
       H.Model.HostDaemon
         H.HostDaemon::{
@@ -27,6 +23,6 @@ in  H.config
       , substrates =
         [ H.entry H.Substrate.AppleSilicon (H.cluster hostDaemon)
         , H.entry H.Substrate.LinuxCpu (H.cluster linuxContainer)
-        , H.entry H.Substrate.LinuxGpu (H.cluster hostBinary)
+        , H.entry H.Substrate.LinuxGpu (H.cluster linuxContainer)
         ]
       }

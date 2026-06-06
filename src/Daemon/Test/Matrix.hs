@@ -82,7 +82,7 @@ executionModelForHostbootstrapTarget raw =
   case Text.strip (Text.toLower raw) of
     "apple-silicon" -> Just ExecutionHostDaemon
     "linux-cpu" -> Just ExecutionContainer
-    "linux-gpu" -> Just ExecutionHostBinary
+    "linux-gpu" -> Just ExecutionContainer
     _ -> Nothing
 
 executionModelWorkerPlacement :: HarnessExecutionModel -> WorkerPlacement

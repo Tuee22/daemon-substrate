@@ -81,8 +81,8 @@ which docs must update together. See:
   "git+https://github.com/tuee22/hostbootstrap.git#egg=hostbootstrap"`). Do not reintroduce a
   bare-`pip` install instruction for it.
 - Behavior is declared in the single substrate-keyed `hostbootstrap.dhall` at the repository
-  root. Apple Silicon maps to `HostDaemon`, Linux CPU maps to `Container`, and Linux GPU maps
-  to `HostBinary`; `--force-target` is the validation override. Do not hand-roll
+  root. Apple Silicon maps to `HostDaemon`; Linux CPU and Linux GPU both map to `Container`
+  (Linux GPU selects the CUDA-flavored base); `--force-target` is the validation override. Do not hand-roll
   `bootstrap/*.sh`, `compose.yaml`, per-model Dhall files, or multi-language Dockerfile layers
   — those responsibilities belong to
   [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap).
@@ -113,9 +113,9 @@ which docs must update together. See:
 ## When you write tests
 
 - Unit tests are pure and do not require a cluster. They live under `test/unit/`.
-- Integration tests require a kind cluster brought up by `hostbootstrap cluster up` or by the
-  direct inner `daemon-substrate-test cluster up` debugging path. HostDaemon integration also
-  requires the harness to own a foreground `hostbootstrap daemon run` process.
+- Integration tests own their kind clusters. A full `daemon-substrate-test test integration`
+  run creates, asserts, and tears down the nine execution-model/workflow cases. HostDaemon
+  integration cases own the foreground worker process for the duration of that case.
   They live under `test/integration/`.
 - Tests use typed fixtures for daemon configuration. Tests that cover the hostbootstrap
   invocation-context seam may set that context explicitly.

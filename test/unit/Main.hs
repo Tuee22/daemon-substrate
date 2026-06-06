@@ -832,10 +832,13 @@ testCliSurface = do
     setEnv "HOSTBOOTSTRAP_TARGET" "linux-gpu"
     targetResolved <- resolveClusterExecutionModel defaultClusterOptions
     unsetEnv "HOSTBOOTSTRAP_TARGET"
-    liftAssert "hostbootstrap target resolves Linux GPU to host-binary" (targetResolved == Right ExecutionHostBinary)
+    liftAssert "hostbootstrap target resolves Linux GPU to container" (targetResolved == Right ExecutionContainer)
     liftAssert
         "test all render includes integration suite"
         ("daemon-substrate-integration" `Text.isInfixOf` renderHarnessTestCommand TestAll)
+    liftAssert "test integration requires kind network" (testCommandRequiresIntegration TestIntegration)
+    liftAssert "test all requires kind network" (testCommandRequiresIntegration TestAll)
+    liftAssert "test unit does not require kind network" (not (testCommandRequiresIntegration TestUnit))
     liftAssert "matrix has nine cases" (matrixCaseCount == 9)
     liftAssert "matrix covers every model/archetype pair once" matrixCoversEveryPair
     liftAssert

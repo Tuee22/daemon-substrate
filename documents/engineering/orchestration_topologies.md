@@ -169,9 +169,10 @@ Property tests in `daemon-substrate-unit`:
 - Reverse topology subscription order is exposed for drain. Full cycle detection remains a
   later acquire-time validation hardening item.
 
-Integration tests in `daemon-substrate-integration`:
+Target matrix assertions in `daemon-substrate-integration`:
 
-- A composed graph (`Pipeline` of `RequestResponse` + `BatchedFanOut` + `FanIn`) provisions correctly against filesystem Pulsar, services synthetic load, and drains cleanly.
+- A composed graph (`Pipeline` of `RequestResponse` + `BatchedFanOut` + `FanIn`) provisions
+  correctly against the live Pulsar/MinIO harness, services synthetic load, and drains cleanly.
 
 ## Cross-references
 

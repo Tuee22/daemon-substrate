@@ -29,6 +29,22 @@ Removal owning phase is Phase 0 Sprint 0.6 (documentation); replacements ship in
   replaced by the thin `docker/Dockerfile` that inherits from the
   `hostbootstrap` base tag. Owning phase: phase-0, sprint 0.6. Replacement landing in
   phase-7, sprint 7.2.
+- **Two-worker in-cluster harness topology** — `chart/values.yaml`,
+  `chart/values/linux-cpu.yaml`, `src/Daemon/Cluster/Workload.hs`, and related unit /
+  integration expectations still represent the older two-worker readiness topology. The target
+  test harness has exactly one worker per matrix case because the worker owns the resources of
+  the whole node. Owning phase: phase-6, sprint 6.4. Replacement: one-worker chart and
+  Haskell workload defaults plus unit coverage for one worker in in-cluster models and one host
+  worker in `HostDaemon`.
+- **Direct kind image-load as the harness publication path** — `src/Daemon/Cluster/Harbor.hs`,
+  `src/Daemon/Cluster/Runner.hs`, and associated docs still describe building
+  `daemon-substrate-test:local` and loading it directly into kind. The target integration suite
+  deploys Harbor and uploads the already-built harness image to each fresh cluster. Owning
+  phase: phase-6, sprint 6.4 and phase-8, sprint 8.8.
+- **Single-environment integration readiness gate** — `test/integration/Main.hs` currently
+  discovers a repo-local kubeconfig from an already-running cluster and checks readiness. The
+  target suite owns the full 3x3 matrix and creates / tears down nine fresh clusters per
+  invocation. Owning phase: phase-8, sprint 8.8.
 
 ### To be deleted in consumer repositories (tracked here for visibility)
 
@@ -61,7 +77,7 @@ They were removed by Phase 1 Sprint 1.4, Phase 7 Sprint 7.4, and Phase 8 Sprint 
 
 - **Intermediate acceleration-keyed `hostbootstrap.dhall` plus per-model spec files** —
   replaced by the current single substrate-keyed `hostbootstrap.dhall` with
-  `AppleSilicon -> HostDaemon`, `LinuxCpu -> Container`, and `LinuxGpu -> HostBinary`.
+  `AppleSilicon -> HostDaemon`, `LinuxCpu -> Container`, and `LinuxGpu -> Container`.
   Owning phase: phase-7, sprint 7.4.
 - **`CMD ["/bin/sh", "-c", "daemon-substrate-test cluster up && sleep infinity"]` Dockerfile
   form** in `docker/Dockerfile` — replaced by a tini-wrapped `ENTRYPOINT`,

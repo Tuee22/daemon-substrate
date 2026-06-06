@@ -8,8 +8,11 @@
 > public module surfaces, typeclasses, protobuf schemas, daemon roles, lifecycle phases, test
 > harness pieces, chart workloads, bootstrap entrypoints.
 
-> Note: items below describe the current implemented inventory for the closed phase plan. See
-> [README.md](README.md) for current per-phase status.
+> Note: items below describe the component inventory and target contracts. Reopened Phase 6 and
+> Phase 8 entries call out current implementation gaps where the repository still carries older
+> worker-cardinality or integration-runner behavior. This repository does not use `.github/`
+> workflows or GitHub Actions as a validation surface; see [README.md](README.md) for current
+> per-phase status.
 
 ## Workflow terminology
 
@@ -166,7 +169,7 @@ identical variant order to the table above.
 |-------|----------|------------|-------------------|
 | `test.request` | upstream user / test driver (public ingress) | orchestrator (×N) | `Shared` |
 | `test.batch.apple-silicon` | orchestrator | host worker | `Shared` |
-| `test.batch.linux-cpu` | orchestrator | in-cluster worker (×2) | `Shared` |
+| `test.batch.linux-cpu` | orchestrator | in-cluster worker (single node owner) | `Shared` |
 | `test.result` | worker | orchestrator (×N) | `Shared` |
 | `test.control.orchestrator` | test driver | orchestrator | `Failover` |
 | `test.control.worker` | orchestrator | worker | `Failover` |
@@ -194,19 +197,19 @@ minutes; the harness uses a tight 30-second window so tests can exercise expirat
 | `harbor` (chart dependency) | StatefulSet | both |
 | `pulsar` (chart dependency) | StatefulSet | both |
 | `minio` (chart dependency) | StatefulSet | both |
-| `daemon-substrate-test-orchestrator` | Deployment, `replicas: 2`, **no** anti-affinity (horizontally scalable; cardinality bounded by Pulsar `Shared` subscription); WAN egress permitted | both |
-| `daemon-substrate-test-worker` | Deployment, `replicas: 2`, required pod anti-affinity | linux-cpu only (apple-silicon runs worker on host) |
+| `daemon-substrate-test-orchestrator` | Deployment, `replicas: 2`, **no** anti-affinity (horizontally scalable; cardinality bounded by Pulsar `Shared` subscription); WAN egress permitted | every matrix case |
+| `daemon-substrate-test-worker` | Deployment, `replicas: 1`, owns the resources of the whole node | in-cluster worker models only; `HostDaemon` runs one host worker process |
 
 The chart surface is implemented in Phase 6 Sprint 6.2 under `chart/`. It renders the
-orchestrator Deployment for both cohorts and conditionally renders the worker Deployment only
-for Linux CPU. The Harbor / Pulsar / MinIO entries are local dependency charts that now render
-deployable StatefulSets with readiness / startup probes and PVCs bound to the manual PVs.
-The harness image is built as `daemon-substrate-test:local` and loaded directly into kind
-before Helm rollout.
+orchestrator Deployment for every harness topology and conditionally renders the worker
+Deployment for in-cluster worker models. The Harbor / Pulsar / MinIO entries are local
+dependency charts that render deployable StatefulSets with readiness / startup probes and PVCs
+bound to the manual PVs. Reopened Phase 6 changes the older `replicas: 2` worker defaults to
+one worker and replaces direct kind image-load as the target publication path with per-cluster
+Harbor image upload.
 
-The worker's `requiredDuringScheduling` anti-affinity on `kubernetes.io/hostname` means the
-linux-cpu kind cluster must provision **at least two nodes**, or only one worker pod
-schedules. The kind node count is declared in
+The worker is cardinality-one in the target harness because it owns the resources of the whole
+node. The kind node count is declared in
 [`../documents/engineering/cluster_topology.md`](../documents/engineering/cluster_topology.md)
 and materialized by `Daemon.Cluster.Kind` (Phase 6 Sprint 6.1).
 
@@ -225,10 +228,9 @@ The `daemon-substrate-test` executable is implemented in Phase 8 Sprint 8.1 with
 `cluster`, `test`, and `service` command parser. Phase 8 Sprint 8.6 adds live Cabal delegation
 for `test ...`, concrete kind / kubectl / helm / Docker execution for `cluster ...`, live
 Pulsar and MinIO admin operations through dependency pods, PVC-backed dependency state, and
-live worker / orchestrator service loops. Managed Apple edge-port forwarding, host-worker
-handoff, live request -> orchestrator -> host worker -> response handoff, Linux
-hostbootstrap container bring-up, two preserved-state Linux `cluster down` / `cluster up`
-cycles, and the `daemon-substrate-integration` live readiness gate are validated.
+live worker / orchestrator service loops. Phase 8 is reopened because
+`daemon-substrate-integration` must become the full executable 3x3 runner: nine fresh cluster
+create/assert/teardown cycles per invocation, independent of the physical host.
 
 ## Bootstrap entrypoints
 
@@ -244,14 +246,14 @@ The bootstrap shape declares one substrate entry per hostbootstrap target in the
 |------------|--------|-------|--------------|
 | `hostbootstrap cluster up` on Apple Silicon | `AppleSilicon` | `HostDaemon` | `.build/daemon-substrate-test cluster up`; host worker runs separately via foreground `hostbootstrap daemon run` |
 | `hostbootstrap cluster up` on Linux CPU | `LinuxCpu` | `Container` | one-shot project container receiving `cluster up` |
-| `hostbootstrap cluster up` on Linux GPU | `LinuxGpu` | `HostBinary` | native `.build/daemon-substrate-test cluster up` |
+| `hostbootstrap cluster up` on Linux GPU | `LinuxGpu` | `Container` | one-shot project container receiving `cluster up`; selected substrate uses the CUDA-flavored base |
 | `hostbootstrap cluster up --force-target <target>` | forced target | target model | same as the selected target |
 
 ## Project-side bootstrap files
 
 | File | Purpose |
 |------|---------|
-| `hostbootstrap.dhall` | typed config consumed by `hostbootstrap`; maps `AppleSilicon` to `HostDaemon`, `LinuxCpu` to `Container`, and `LinuxGpu` to `HostBinary` |
+| `hostbootstrap.dhall` | typed config consumed by `hostbootstrap`; maps `AppleSilicon` to `HostDaemon`, `LinuxCpu` to `Container`, and `LinuxGpu` to `Container` |
 | `docker/Dockerfile` | thin project Dockerfile (`FROM ${BASE_IMAGE}` plus the project's own build steps, a tini-wrapped `ENTRYPOINT`, and a `RUN daemon-substrate-test check-code` build gate); no default `CMD`; the heavy toolchain is in the base |
 | `cabal.project.container` | container-only Cabal project file importing `/opt/basecontainer/haskell-deps/cabal.project.freeze` |
 
@@ -262,13 +264,13 @@ the direct `cluster --model` debugging override, persisted execution-model recor
 ## Base image
 
 `hostbootstrap` publishes CPU and CUDA base images. Apple Silicon and Linux CPU consume the CPU
-base for container artifacts; Linux GPU consumes the CUDA base for the HostBinary build
-container and optional project image.
+base for container artifacts; Linux GPU consumes the CUDA base for the one-shot project
+container.
 
 | Tag | Used by | Provides |
 |-----|---------|----------|
 | `docker.io/tuee22/hostbootstrap:basecontainer-cpu-amd64` / `-arm64` | `AppleSilicon`, `LinuxCpu` container artifacts | `ghc-9.12.4`, Cabal, kube tools (`kubectl`, `helm`, `kind`), `protoc`, `ormolu`, `hlint`, warm Haskell store |
-| `docker.io/tuee22/hostbootstrap:basecontainer-cuda-amd64` / `-arm64` | `LinuxGpu` HostBinary build container and optional project image | CPU toolchain plus CUDA-flavored base selection |
+| `docker.io/tuee22/hostbootstrap:basecontainer-cuda-amd64` / `-arm64` | `LinuxGpu` project container | CPU toolchain plus CUDA-flavored base selection |
 
 The Pulsar client is in-process pure Haskell (`Daemon.Pulsar.Native` over the native binary
 protocol; `Daemon.Pulsar.Admin.Http` over admin REST), so the base image needs **no** Node

@@ -279,7 +279,7 @@ The library code is substrate-agnostic; the *test harness* that proves the libra
 necessarily aware of the execution model for cluster bootstrap (`Container` project image vs
 `HostBinary` / `HostDaemon` native host build). The harness declares one substrate entry per
 hostbootstrap target in the single root `hostbootstrap.dhall`: Apple Silicon `HostDaemon`,
-Linux CPU `Container`, and Linux GPU `HostBinary`. The harness lives outside consumer-facing
+Linux CPU `Container`, and Linux GPU `Container` with the CUDA-flavored base image. The harness lives outside consumer-facing
 `src/Daemon/*` code — under `hostbootstrap.dhall`, `docker/Dockerfile`,
 `chart/`, `src/Daemon/Cluster/*`, and the `daemon-substrate-test` executable. The host-specific
 bring-up itself is delegated to

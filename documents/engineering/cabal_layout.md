@@ -97,9 +97,8 @@ Phase 1 has landed the buildable package scaffold:
 The `Daemon.Cluster.*` plan-generation modules are implemented, and Phase 8 Sprint 8.6 adds
 the live runner interpreters for kind / kubectl / helm / Docker, Pulsar admin, MinIO admin,
 edge-port persistence, managed Apple edge-port forwarding, and live worker / orchestrator
-service loops. Apple host-worker handoff, live request -> orchestrator -> host worker ->
-response handoff, Linux hostbootstrap container bring-up, preserved-state Linux kind cycles,
-and the `daemon-substrate-integration` live readiness gate are validated.
+service loops. Phase 8 is reopened because `daemon-substrate-integration` must become the full
+3x3 matrix runner instead of a single-environment readiness gate.
 
 ## Package shape
 
@@ -304,13 +303,15 @@ test-suite daemon-substrate-haskell-style
 |-------|-------------------|
 | `daemon-substrate-unit` | pure logic: protobuf encode / decode, `WorkflowOwner` fold, `BootConfig` / `LiveConfig` / `LifecyclePolicy` decoders, cache eviction policies, `Store` semantics over `FilesystemMinIO`, `Consumer` dedup over `FilesystemPulsar`, reconciler tick over filesystem backends |
 | `daemon-substrate-lifecycle` | daemon spawned as a real process; SIGHUP / SIGTERM / SIGINT exercised; `/readyz` polled; `LiveConfig` reload validated. No cluster needed. |
-| `daemon-substrate-integration` | live readiness suite; requires a real kind cluster brought up by `hostbootstrap cluster up` (delegating inward to `daemon-substrate-test cluster up`) and checks node topology, dependency rollouts, daemon workload readiness, retained PVCs, and edge-port state |
+| `daemon-substrate-integration` | executable 3x3 model × workflow integration matrix; target behavior creates, asserts, and tears down nine fresh kind clusters per invocation |
 | `daemon-substrate-haskell-style` | governed-doc validator plus direct `Daemon.Proto.*` import-boundary gate |
 
-The integration suite is the one that depends on a running cluster. It is invoked through
-`daemon-substrate-test test integration`; the command delegates directly to
-`cabal test daemon-substrate-integration`, which discovers the repo-local kubeconfig and
-fails fast if the live readiness gate is not satisfied.
+The integration suite is the one that depends on live clusters. It is invoked through
+`daemon-substrate-test test integration`; the target command delegates to
+`cabal test daemon-substrate-integration`, whose reopened Phase 8 work owns cluster lifecycle
+for all nine matrix cases. The current implementation still discovers a repo-local kubeconfig
+from a preexisting cluster; that is tracked in
+[`../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md).
 
 ## Why no sublibrary split
 

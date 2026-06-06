@@ -13,19 +13,25 @@
 The substrate-keyed `hostbootstrap.dhall` and the host-native worker under the `HostDaemon`
 model are implemented. Worker placement is keyed by execution model: `container` and
 `host-binary` run the worker Deployment in the kind cluster, while `host-daemon` expects the
-worker to run as a caller-owned foreground host process. The chart still uses the existing
-cohort values files to express the two topology shapes: three worker nodes when the worker
-runs in-cluster, one worker node when it runs host-native.
+worker to run as a caller-owned foreground host process.
+
+Phase 6 is reopened to correct the older two-worker test topology. The target topology has
+exactly one worker for each matrix case, because that worker owns the resources of the whole
+node. Phase 8 is reopened so `daemon-substrate-test test integration` creates and tears down a
+fresh cluster for each of the nine model/workflow cases.
 
 ## TL;DR
 
-- A single kind cluster carries Harbor, Pulsar, MinIO, the orchestrator Deployment, and, for
-  `container` / `host-binary`, the worker Deployment.
+- Each integration matrix case creates a fresh kind cluster carrying Harbor, Pulsar, MinIO, the
+  coordinator/orchestrator Deployment, and, for `container` / `host-binary`, the worker
+  Deployment.
 - Under `host-daemon`, the worker runs as a host-native process outside the cluster; the
   cluster side runs everything else.
-- Pod anti-affinity on `kubernetes.io/hostname` keeps Worker pods one-per-node for in-cluster
-  worker models; that topology has three worker nodes so the harness can exercise N>1. The
-  host-native topology uses one worker node because the Worker runs outside the cluster.
+- The coordinator/orchestrator Deployment runs with two replicas. The worker is cardinality-one
+  for every case, regardless of whether it runs in-cluster or as a host daemon.
+- Harbor is deployed for every fresh cluster and receives the harness image for that case. The
+  host/project artifact may be reused, but the in-cluster registry deployment and image upload
+  are case-local.
 - The kubeconfig lives at `./.data/runtime/daemon-substrate.kubeconfig` for `container` and
   `./.build/daemon-substrate.kubeconfig` for host-native models.
 
@@ -33,8 +39,8 @@ runs in-cluster, one worker node when it runs host-native.
 
 Phase 6 Sprint 6.1 implements the `Daemon.Cluster.*` Haskell plan-generation modules. They
 produce deterministic bring-up, status, and teardown action plans for kind, manual storage,
-Helm releases, local harness image build / kind image-load, Pulsar namespace/topic setup,
-MinIO bucket seeding, orchestrator/worker workload resources, and edge-port persistence.
+Helm releases, harness image publication, Pulsar namespace/topic setup, MinIO bucket seeding,
+orchestrator/worker workload resources, and edge-port persistence.
 
 Phase 6 Sprint 6.2 implements `chart/`: default values, per-cohort values, orchestrator and
 worker Deployments, ConfigMaps, Services, a restrictive egress NetworkPolicy that excludes
@@ -46,10 +52,12 @@ the library config decoders, and the chart packages the same role, live, and lif
 files under `chart/files/` for ConfigMap mounting.
 
 Phase 8 Sprint 8.6 implements the live `daemon-substrate-test cluster ...` interpreter:
-concrete `kind`, `kubectl`, `helm`, Docker image build, kind image-load, Kubernetes apply /
+concrete `kind`, `kubectl`, `helm`, Docker image build/publication, Kubernetes apply /
 rollout wait, Pulsar admin, MinIO admin, and edge-port actions execute against absolute tool
 paths. The dependency charts are deployable local StatefulSets with readiness / startup
-probes, and Harbor / Pulsar / MinIO attach PVCs backed by the repo-local kind data mount.
+probes, and Harbor / Pulsar / MinIO attach PVCs backed by the repo-local kind data mount. The
+current runner still uses direct kind image-load for publication; reopened Phase 6 replaces
+that with Harbor upload as the supported target.
 
 Apple Silicon live bring-up now reaches Running dependency pods and `2/2` orchestrator pods,
 binds the Harbor / Pulsar / MinIO PVCs, preserves MinIO / Pulsar data across a
@@ -63,8 +71,10 @@ a live request -> orchestrator -> host worker -> response smoke handoff.
 Linux live bring-up is validated through `hostbootstrap cluster up` using the one-shot project
 container handoff. The container joins Docker's `kind` network, exports kind's internal
 kubeconfig, waits for node readiness, deploys the same dependency StatefulSets, rolls out the
-orchestrator Deployment plus the two-replica worker Deployment, and keeps the retained Harbor /
-Pulsar / MinIO PVCs bound across consecutive `cluster down && cluster up` cycles.
+coordinator/orchestrator Deployment, and keeps the retained Harbor / Pulsar / MinIO PVCs bound
+across consecutive `cluster down && cluster up` cycles. Reopened Phase 6/8 work changes the
+worker side from the current two-replica readiness shape to the target single-worker
+model/workflow matrix shape.
 
 ## In-cluster components
 
@@ -72,16 +82,15 @@ Pulsar / MinIO PVCs bound across consecutive `cluster down && cluster up` cycles
 
 | Workload | Type | Notes |
 |----------|------|-------|
-| Harbor | StatefulSet (chart dependency) | local registry dependency; current harness builds `daemon-substrate-test:local` and loads it directly into kind before Helm rollout |
+| Harbor | StatefulSet (chart dependency) | local registry dependency; target integration deploys it and uploads the harness image for every matrix case |
 | Apache Pulsar | StatefulSet (chart dependency) | workflow SSoT; minimal single-broker config for the harness; advertises the in-cluster service name for broker lookups and uses a fixed BookKeeper port for PVC-backed standalone state |
 | MinIO | StatefulSet (chart dependency) | static blob SSoT; minimal single-node config with an `mc` sidecar for bucket creation and seed object upload |
-| `daemon-substrate-test-orchestrator` | Deployment | the orchestrator role; `replicas: 2`; **no** anti-affinity; reads `orchestrator.dhall` from a mounted ConfigMap; egress-permitted (the only in-cluster workload that may reach the WAN) |
-| `daemon-substrate-test-worker` (in-cluster worker models only) | Deployment | the worker role; `replicas: 2`; required pod anti-affinity on `kubernetes.io/hostname`; reads `worker.dhall` from a mounted ConfigMap |
+| `daemon-substrate-test-orchestrator` | Deployment | the coordinator/orchestrator role; `replicas: 2`; **no** anti-affinity; reads `orchestrator.dhall` from a mounted ConfigMap; egress-permitted (the only in-cluster workload that may reach the WAN) |
+| `daemon-substrate-test-worker` (in-cluster worker models only) | Deployment | the worker role; `replicas: 1`; owns the resources of the whole node; reads `worker.dhall` from a mounted ConfigMap |
 
-The in-cluster worker topology is configured with three worker nodes (one control plane +
-three workers) so it can exercise two Worker pods on distinct nodes. The host-native worker
-topology uses one worker node because its Worker process runs outside the cluster under the
-caller-owned foreground `hostbootstrap daemon run` process.
+The in-cluster worker topology schedules exactly one worker pod. The host-native worker
+topology starts exactly one worker process outside the cluster under the caller-owned
+foreground `hostbootstrap daemon run` process.
 
 Harbor, Pulsar, and MinIO use PVCs bound to manual PVs. The kind nodes mount the host path
 `./.data/kind/<cohort>/daemon-substrate` at
@@ -145,7 +154,7 @@ chart/
 ├── values.yaml               # default values; overridden per cohort
 ├── values/
 │   ├── apple-silicon.yaml    # cohort-specific overrides (worker disabled in-cluster)
-│   └── linux-cpu.yaml        # cohort-specific overrides (worker enabled, replicas: 2)
+│   └── linux-cpu.yaml        # cohort-specific overrides (worker enabled, replicas: 1)
 └── templates/
     ├── deployment-orchestrator.yaml
     ├── deployment-worker.yaml
@@ -159,7 +168,7 @@ The `worker.enabled` boolean in `values.yaml` (default `true`, overridden to `fa
 
 ## Anti-affinity contract
 
-The Linux CPU worker Deployment carries the substrate-mandated rule:
+The in-cluster worker Deployment carries the substrate-mandated rule:
 
 ```yaml
 affinity:
@@ -171,9 +180,9 @@ affinity:
         topologyKey: kubernetes.io/hostname
 ```
 
-This guarantees at most one worker pod per node. The harness intentionally requests
-`replicas: 2` on a three-worker-node cluster so the scheduler can place both pods. A third
-replica would remain `Pending` — the harness asserts this behavior in the integration suite.
+This guarantees at most one worker pod per node. The target harness requests `replicas: 1`
+because one worker owns the resources of the whole node. The integration suite must assert that
+no second worker is scheduled for the same matrix case.
 
 ## ConfigMap layout
 
@@ -198,7 +207,9 @@ packaged harness files are the default source mounted into live pods.
 Neither path mutates the operator's `~/.kube/config`. The repo-local kubeconfig is the only
 authoritative handle to the harness cluster. On Linux the kubeconfig is exported with
 kind's internal endpoint because the command runs inside the outer container; the container
-is attached to Docker's `kind` network before Kubernetes resources are applied.
+is attached to Docker's `kind` network before Kubernetes resources are applied. Container
+model `test integration` and `test all` runs perform the same network attachment before
+Cabal delegation so the live readiness suite can use that internal kubeconfig.
 
 ## Edge port discovery
 
@@ -219,7 +230,8 @@ startup and rewrites its Pulsar / Pulsar admin / MinIO endpoints to `127.0.0.1`.
 ## Outer container shape
 
 The outer container that hosts `daemon-substrate-test` under the `Container` model is built
-from the [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap) CPU base image. The project
+from the selected [`hostbootstrap`](https://github.com/Tuee22/hostbootstrap) base image: CPU
+for Linux CPU and CUDA-flavored for Linux GPU. The project
 Dockerfile (`docker/Dockerfile`) is intentionally thin: `FROM ${BASE_IMAGE}`
 plus the project's own build steps, a tini-wrapped `ENTRYPOINT`, and a
 `RUN daemon-substrate-test check-code` build gate. Every heavy toolchain layer

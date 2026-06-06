@@ -195,7 +195,7 @@ orchestrator and reconciler actions together.
 
 The Worker / Orchestrator role split is the substrate's scaffolding contract for `infernix` and
 `jitML`. The roles are designed to carry three ML workflow archetypes, and the test harness
-targets all three (the full 3×3 model × workflow matrix lives in
+must execute all three across all three execution models (the full 3×3 model × workflow matrix lives in
 [../development/testing_strategy.md](../development/testing_strategy.md)):
 
 - **(a) Continuous batched inference** (≈ `infernix`). The orchestrator fans requests in off a

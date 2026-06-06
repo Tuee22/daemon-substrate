@@ -37,9 +37,11 @@ Current implementation note: Phase 8 Sprint 8.6 implements live Cabal delegation
 `test ...`, concrete kind / kubectl / helm / Docker execution for `cluster ...` actions,
 live Pulsar and MinIO admin operations through the dependency pods, PVC-backed dependency
 state, live worker / orchestrator `service` loops, managed Apple edge-port forwarding, and
-Apple live workflow handoff. Linux hostbootstrap container bring-up, preserved-state
-kind-cluster cycles, worker/orchestrator readiness, retained PVC binding, edge-port
-preservation, and the `daemon-substrate-integration` live readiness gate are validated.
+Apple live workflow handoff. Container-model `test integration` and `test all` runs attach
+the current project container to Docker's `kind` network before Cabal delegation. Phase 8 is
+reopened because `daemon-substrate-integration` must become the full nine-case matrix runner,
+creating and tearing down a fresh cluster per case instead of checking one preexisting
+environment.
 
 | Command | Purpose | Long-running? | Idempotent? |
 |---------|---------|---------------|-------------|
@@ -48,7 +50,8 @@ preservation, and the `daemon-substrate-integration` live readiness gate are val
 | `daemon-substrate-test cluster delete [--model <container\|host-binary\|host-daemon>]` | Thoroughly tear down the kind cluster for the selected execution model | no | yes |
 | `daemon-substrate-test cluster status [--model <container\|host-binary\|host-daemon>]` | Report current kind/node status; target lifecycle state | no | yes (read-only) |
 | `daemon-substrate-test test unit` | Run `daemon-substrate-unit` test suite | no | yes |
-| `daemon-substrate-test test integration` | Run `daemon-substrate-integration` live readiness suite; requires a running cluster | no | yes |
+| `daemon-substrate-test test lifecycle` | Run `daemon-substrate-lifecycle` test suite | no | yes |
+| `daemon-substrate-test test integration` | Run the nine-case model × workflow integration matrix; owns cluster create/upload/teardown for each case | no | yes |
 | `daemon-substrate-test test lint` | Run the local style suite | no | yes |
 | `daemon-substrate-test test all` | Run lint + unit + lifecycle + integration in order | no | yes |
 | `daemon-substrate-test check-code` | Run the Dockerfile build-gate style check | no | yes |
@@ -61,10 +64,10 @@ preservation, and the `daemon-substrate-integration` live readiness gate are val
 
 Reconciles the kind cluster to the supported topology described in
 [../engineering/cluster_topology.md](../engineering/cluster_topology.md). Steps in order:
-kind create, manual StorageClass and PVs, local image build and kind image-load, Helm
+kind create, manual StorageClass and PVs, Harbor deployment and harness image upload, Helm
 dependency build and release upgrade, dependency readiness waits, Pulsar bootstrap, MinIO
-bootstrap + seed, ConfigMap render, orchestrator Deployment, worker Deployment (Linux CPU
-cohort), edge-port discovery.
+bootstrap + seed, ConfigMap render, coordinator/orchestrator Deployment, worker placement for
+the selected execution model, edge-port discovery.
 
 When invoked by `hostbootstrap`, the selected target supplies the execution model. Direct inner
 invocations default to `container` unless `--model` is provided. The selected model determines
@@ -112,11 +115,13 @@ Invokes `cabal test daemon-substrate-unit`. Pure Haskell tests; no cluster requi
 
 ### `test integration`
 
-Invokes `cabal test daemon-substrate-integration`. The suite requires a repo-local
-kubeconfig from `hostbootstrap cluster up`; it fails fast if the live cluster does not match
-the supported node topology, dependency rollouts, daemon workload readiness, retained PVCs,
-or edge-port record described in
-[../development/testing_strategy.md § test integration](../development/testing_strategy.md).
+Invokes `cabal test daemon-substrate-integration`. The target suite creates and tears down one
+fresh kind cluster for each execution-model/workflow-archetype matrix cell. It deploys Harbor /
+Pulsar / MinIO, uploads the already-built harness image through Harbor, deploys two
+coordinator/orchestrator replicas plus exactly one worker in the selected placement, runs the
+workflow assertions, checks cluster status, and tears the cluster down before the next case.
+For the `container` execution model, the command attaches the current project container to
+Docker's `kind` network before using the internal kind API endpoint.
 
 ### `test lint`
 
@@ -126,7 +131,8 @@ metadata/link/phase-structure validator and the direct `Daemon.Proto.*` import b
 ### `test all`
 
 Runs `test lint`, `test unit`, `test lifecycle`, and `test integration` in order. Stops at
-the first failure.
+the first failure. Because `test integration` owns cluster lifecycle, `test all` does not
+require a preexisting kind cluster.
 
 ### `check-code`
 
@@ -154,7 +160,7 @@ preflight; they fail fast with a diagnostic if it cannot be materialized or vali
 There is no `--substrate` or `--accel` flag on any `daemon-substrate-test` command. The
 substrate target is selected at the `hostbootstrap` layer from the single
 `hostbootstrap.dhall`, optionally overridden with `--force-target`. The selected execution
-model is persisted beside the edge-port record for the integration gate.
+model is persisted beside each matrix case's edge-port record for integration assertions.
 
 ## What is not a supported command
 
@@ -172,7 +178,8 @@ model is persisted beside the edge-port record for the integration gate.
 `hostbootstrap` is installed via `pipx` only
 (`pipx install "git+https://github.com/tuee22/hostbootstrap.git#egg=hostbootstrap"`). The
 single `hostbootstrap.dhall` maps Apple Silicon to `HostDaemon`, Linux CPU to `Container`, and
-Linux GPU to `HostBinary`; lifecycle commands accept `--force-target` for validation:
+Linux GPU to `Container` with the CUDA-flavored base image; lifecycle commands accept
+`--force-target` for validation:
 
 | Command | Purpose |
 |---------|---------|

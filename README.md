@@ -105,7 +105,7 @@ The library exposes a small surface that consumers wire into their own daemon en
 
 The production architecture described in sections (a–g) above is how *consumers* (`infernix`, `jitML`, future ones) deploy the substrate. The repository's own test harness exists to validate the substrate library shape and uses a **mock engine** that performs no real ML, no GPU work, and no Metal or CUDA calls — even on Apple Silicon. The harness exercises Pulsar / MinIO / lifecycle / cache plumbing, not hardware acceleration.
 
-The repository ships a self-managed end-to-end test harness purely to prove that the library substrate works. The harness builds a separate `daemon-substrate-test` binary and brings up a real kind cluster with real Harbor, real Pulsar, and real MinIO — exactly mirroring how `infernix` and `jitML` validate their own integration. The harness uses a **mock worker engine** that returns placeholder result bytes, mocks reads from MinIO (mock weight blobs, mock binary artifacts), and mocks the local cache: representative of the workflow shape but storage- and compute-light by design.
+The repository ships a self-managed end-to-end test harness purely to prove that the library substrate works. The harness builds a separate `daemon-substrate-test` binary and brings up real kind clusters with real Harbor, real Pulsar, and real MinIO — exactly mirroring how `infernix` and `jitML` validate their own integration. The harness uses a **mock worker engine** that returns placeholder result bytes, mocks reads from MinIO (mock weight blobs, mock binary artifacts), and mocks the local cache: representative of the workflow shape but storage- and compute-light by design.
 
 Upstream callers of the workflow (the test driver, in the harness; real users, in production) **interact with the orchestrator exclusively through Pulsar** by publishing to the fan-in topic. The substrate exposes no separate HTTP / gRPC / REST surface for upstream callers.
 
@@ -119,30 +119,42 @@ has one model:
 - **LinuxCpu → Container** — `hostbootstrap cluster up` builds a thin project container
   `FROM` the `hostbootstrap` base image and forwards `cluster up` to the tini-wrapped
   `daemon-substrate-test` entrypoint.
-- **LinuxGpu → HostBinary** — `hostbootstrap cluster up` builds
-  `./.build/daemon-substrate-test` and invokes it per command on the host.
+- **LinuxGpu → Container** — same one-shot project-container lifecycle as Linux CPU, but
+  selected through the CUDA-flavored `hostbootstrap` base image and Linux GPU prerequisites.
 
 Consumers do **not** run the harness — it exists for `daemon-substrate`'s own validation only. The cluster bootstrap flow, the operator-facing commands, and the coverage obligations are documented in [`documents/development/testing_strategy.md`](documents/development/testing_strategy.md) and [`documents/operations/cluster_bootstrap_runbook.md`](documents/operations/cluster_bootstrap_runbook.md).
 
-### Three substrate targets; three execution models
+### Three substrate targets; containerized Linux targets
 
 `daemon-substrate` is **CPU-only** — the mock engine performs no GPU, Metal, or CUDA work —
-but the harness intentionally keeps one model per substrate so the project exercises the same
-outer lifecycle shapes as the consumer projects. A full hardware validation run uses three
-machines: Apple Silicon for `HostDaemon`, Linux CPU for `Container`, and Linux GPU for
-`HostBinary`.
+but the harness intentionally keeps a Linux GPU substrate entry so the project exercises the
+CUDA-flavored hostbootstrap base-image and prerequisite path. A full hardware validation run
+uses three machines: Apple Silicon for `HostDaemon`, Linux CPU for `Container`, and Linux GPU
+for the CUDA-flavored `Container`.
 
 For local validation, `hostbootstrap cluster up --force-target <substrate>` can select any
-declared substrate on one machine. That preserves the full **3×3** model × workflow matrix
-without reintroducing per-model spec files.
+declared substrate on one machine without reintroducing per-model spec files.
 
 ### Reference scaffolding: the 3×3 model × workflow matrix
 
-`daemon-substrate` is the reference scaffolding for `infernix` and `jitML`. The harness target is a full **3×3 matrix**: each of the three execution models (Container, HostBinary, HostDaemon) exercising each of three ML workflow archetypes —
+`daemon-substrate` is the reference scaffolding for `infernix` and `jitML`. Separate from the
+three hostbootstrap substrate targets, the harness owns a direct inner **3×3 executable
+matrix**: each of the three execution models (Container, HostBinary, HostDaemon) exercising each of
+three ML workflow archetypes —
 
 - **(a) continuous batched inference** (≈ `infernix`),
 - **(b) finite supervised-learning / offline-RL training jobs** (≈ `jitML`),
 - **(c) continuous online RL** — MinIO weight updates announced on Pulsar inference topics, with distinct training-vs-inference task messages routable to same-or-separate stateless engines.
+
+One run of `daemon-substrate-test test integration` is intended to run all nine cases,
+regardless of the physical machine. Each case creates a fresh kind cluster, deploys Harbor /
+Pulsar / MinIO, uploads the already-built harness image through Harbor, deploys a two-replica
+coordinator/orchestrator service plus exactly one worker, runs the workflow assertions, and
+tears the cluster down before the next case. The same compiled Haskell binary launches both
+long-running roles; Dhall selects whether it behaves as coordinator/orchestrator or worker,
+including the Pulsar topics it reads from and writes to. The coordinator/orchestrator may
+idempotently create missing Pulsar topics declared by its lifecycle policy; the worker /
+inference daemon must not create topics.
 
 ## Foundation
 
@@ -172,8 +184,8 @@ one infrastructure substrate.
 
 The substrate-keyed `hostbootstrap.dhall`, the tini-wrapped container `ENTRYPOINT` with the
 `daemon-substrate-test check-code` build gate, the plain `cluster up/down/delete` handoff, and
-the 3×3 model × workflow matrix are implemented repo-side and tracked as closed work in
-`DEVELOPMENT_PLAN/`.
+the substrate target map are implemented repo-side. The full executable 3×3 integration matrix
+and one-worker cluster topology are reopened work tracked in `DEVELOPMENT_PLAN/`.
 
 ## License
 
